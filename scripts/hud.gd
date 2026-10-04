@@ -777,12 +777,15 @@ func _draw_server(s: Vector2) -> void:
 
 	# --- Sol: durum ---
 	var players: Array = d.get("players", [])
-	var st := Rect2(lx, top, lw, 150)
+	var st := Rect2(lx, top, lw, 196)
 	_panel(st, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
 	var cloud_on: bool = d.get("cloud", false)
 	var stats := [
-		["Arenadaki oyuncu", str(players.size()), GOLD],
+		["Çok oyunculu (arenada)", str(players.size()), GOLD],
+		["Tek oyunculu oynayan", str(d.get("sp_count", 0)), Color(0.6, 0.85, 1)],
 		["Menüde bekleyen", str(d.get("menu_count", 0)), GOLD],
+		["Sunucu yükü", "%.1f ms • %d fps" % [float(d.get("load_ms", 0.0)), int(d.get("srv_fps", 0.0))],
+			Color(0.5, 1, 0.6) if float(d.get("load_ms", 0.0)) < 12.0 else (Color(1, 0.85, 0.3) if float(d.get("load_ms", 0.0)) < 25.0 else Color(1, 0.45, 0.4))],
 		["Bot (canlı / hedef)", "%d / %d" % [int(d.get("bots", 0)), int(d.get("bot_target", 0))], GOLD],
 		["Skor tablosundaki oyuncu", str(d.get("lb_count", 0)), GOLD],
 		["Kalıcı kayıt (bulut)", "Açık" if cloud_on else "Kapalı", Color(0.5, 1, 0.6) if cloud_on else Color(1, 0.6, 0.4)],
@@ -791,12 +794,12 @@ func _draw_server(s: Vector2) -> void:
 		var urls: Array = d.get("urls", [])
 		stats.push_front(["Telefondan (aynı Wi-Fi)", urls[0] if not urls.is_empty() else "-", Color.WHITE])
 	for i in stats.size():
-		var y := st.position.y + 24 + i * 24
-		_text(Vector2(st.position.x + 14, y), stats[i][0], 14, Color(1, 1, 1, 0.65))
+		var y := st.position.y + 22 + i * 22
+		_text(Vector2(st.position.x + 14, y), stats[i][0], 13, Color(1, 1, 1, 0.65))
 		_text(Vector2(st.position.x, y), stats[i][1], _fit_size(stats[i][1], 15, 150.0), stats[i][2], HORIZONTAL_ALIGNMENT_RIGHT, st.size.x - 14)
 
 	# --- Sol: kontroller ---
-	var ct := Rect2(lx, st.end.y + gap, lw, 296)
+	var ct := Rect2(lx, st.end.y + gap, lw, 290)
 	_panel(ct, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
 	_text(Vector2(ct.position.x + 14, ct.position.y + 26), "ARENA KONTROLLERİ", 15, GOLD)
 	_text(Vector2(ct.position.x + 14, ct.position.y + 58), "En çok bot", 15, Color.WHITE)
@@ -906,7 +909,7 @@ func _draw_server_players(r: Rect2, players: Array) -> void:
 func _draw_registry(r: Rect2, reg: Array) -> void:
 	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
 	_text(Vector2(r.position.x + 14, r.position.y + 24), "KAYITLI OYUNCULAR (ilk başlama sırasıyla)", 15, GOLD)
-	_text(Vector2(r.position.x, r.position.y + 24), "yeşil nokta: şu an bağlı", 11, Color(1, 1, 1, 0.45),
+	_text(Vector2(r.position.x, r.position.y + 24), "yeşil: çok oyunculu • mavi: tek • sarı: menü", 11, Color(1, 1, 1, 0.5),
 		HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14.0)
 	if reg.is_empty():
 		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0), "Henüz kayıtlı oyuncu yok", 15, Color(1, 1, 1, 0.45),
@@ -928,11 +931,22 @@ func _draw_registry(r: Rect2, reg: Array) -> void:
 		var row := Rect2(r.position.x + 8, r.position.y + 36 + i * row_h, r.size.x - 16, row_h - 6)
 		_panel(row, Color(1, 1, 1, 0.04) if i % 2 == 0 else Color(1, 1, 1, 0.02), Color(0, 0, 0, 0), 10)
 		var mid := row.position.y + row.size.y / 2.0
-		GameData.disc(cv, Vector2(row.position.x + 12, mid - 6), 5.0, Color(0.4, 1, 0.5) if p.get("on", false) else Color(1, 1, 1, 0.2))
+		var wcol := Color(1, 1, 1, 0.2)
+		match String(p.get("where", "")):
+			"arena":
+				wcol = Color(0.4, 1, 0.5)
+			"sp":
+				wcol = Color(0.45, 0.75, 1)
+			"menu":
+				wcol = Color(1, 0.85, 0.3)
+		GameData.disc(cv, Vector2(row.position.x + 12, mid - 6), 5.0, wcol)
 		var info_w := row.size.x - acts.size() * (bw + 4) - 30.0
 		var line1 := "%d. %s  •  Sv %d  •  %d altın  •  %d leş" % [idx + 1, String(p.get("n", "?")), int(p.get("l", 1)), int(p.get("c", 0)), int(p.get("kills", 0))]
 		_text(Vector2(row.position.x + 24, mid - 2), line1, _fit_size(line1, 14, info_w), Color.WHITE)
+		var now_txt: String = {"arena": "Şu an: ÇOK OYUNCULU", "sp": "Şu an: TEK OYUNCULU", "menu": "Şu an: menüde"}.get(String(p.get("where", "")), "")
 		var line2 := "Başladı: %s  •  Son: %s  •  %s" % [String(p.get("first", "-")), String(p.get("seen", "-")), String(p.get("dev", ""))]
+		if now_txt != "":
+			line2 = now_txt + "  •  " + line2
 		if p.get("pend", false):
 			line2 += "  •  değişiklik bekliyor"
 		if p.get("owned", false):
@@ -959,6 +973,7 @@ func _draw_conn_log(r: Rect2, conn: Array) -> void:
 			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 		return
 	var evs := {"giris_menu": ["menüye girdi", Color(0.5, 1, 0.6)], "giris_arena": ["arenaya girdi", Color(0.6, 0.85, 1)],
+		"giris_sp": ["tek oyunculu oynuyor", Color(0.45, 0.75, 1)],
 		"cikis": ["çıktı", Color(1, 0.55, 0.45)]}
 	var rows := int((r.size.y - 40) / 20)
 	var shown := 0
@@ -2063,37 +2078,88 @@ func _draw_minimap(rect: Rect2, big := false) -> void:
 		cv.draw_arc(mc + Vector2(-2, -2), 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.6), 2.0)
 		cv.draw_line(mc + Vector2(2, 2), mc + Vector2(6, 6), Color(1, 1, 1, 0.6), 2.0)
 
-## Leş bildirimleri: sağda liderler tablosunun altında, sağa yaslı. Öldüren ve ölen kendi renginde;
-## seni ilgilendirenler (sen öldürdün / seni öldürdüler) renkli çerçeveyle öne çıkar. Yeni gelen kayarak girer.
+## Leş akışı: sağda liderler tablosunun altında, sağa yaslı. Her satır: [öldüren]  bıçak ☠  [ölen].
+## Öldüren ve ölen kendi renginde; seni ilgilendirenler altın çerçeveli. 7 sn kalır, yenisi gelince en eskisi düşer.
+const FEED_TIME := 7.0
+const FEED_FS := 16
+
+
 func _draw_kill_feed(s: Vector2) -> void:
-	var y := 14.0 + 40.0 + 5 * 27.0 + 12.0
+	var y := 14.0 + 40.0 + 5 * 27.0 + 14.0
 	var right := s.x - 16.0
 	var now: float = main.round_time
 	var shown := 0
 	for e in main.kill_feed:
 		var age := now - float(e["time"])
-		if age > 5.0 or shown >= 4:
+		if age > FEED_TIME or shown >= 4:
 			continue
 		shown += 1
-		var a := clampf((5.0 - age) * 2.0, 0.0, 1.0)
-		var slide := maxf(0.0, 0.18 - age) / 0.18 * 60.0
+		var a := clampf((FEED_TIME - age) / 0.8, 0.0, 1.0) # son 0.8 sn'de solar
+		var slide := maxf(0.0, 0.2 - age) / 0.2 * 80.0 # yeni gelen sağdan kayarak girer
 		var killer: String = e["killer"]
 		var victim: String = e["victim"]
-		var kw := font.get_string_size(killer, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-		var vw := font.get_string_size(victim, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-		var w := kw + vw + 70.0
+		var kw := font.get_string_size(killer, HORIZONTAL_ALIGNMENT_LEFT, -1, FEED_FS).x
+		var vw := font.get_string_size(victim, HORIZONTAL_ALIGNMENT_LEFT, -1, FEED_FS).x
+		var icon_w := 66.0 # bıçak + kafatası için ayrılmış boşluk
+		var pad := 14.0
+		var w := pad + kw + icon_w + vw + pad
 		var x := right - w + slide
+		var h := 32.0
 		var mine: bool = e["mine"]
 		var kc: Color = e["killer_col"]
 		var vc: Color = e["victim_col"]
-		_panel(Rect2(x, y, w, 30), Color(0.04, 0.06, 0.09, 0.78 * a), Color(GOLD, 0.8 * a) if mine else Color(1, 1, 1, 0.08 * a), 15, 2 if mine else 1)
-		GameData.disc(cv, Vector2(x + 12, y + 15), 4.0, Color(kc, a))
-		_text(Vector2(x + 22, y + 21), killer, 16, Color(kc.lightened(0.35), a))
-		KnifeArt.draw(cv, Vector2(x + 22 + kw + 16, y + 15), PI / 2.0, 0.75, 0, false)
-		_skull(Vector2(x + 22 + kw + 32, y + 13), 5.0, Color(1, 1, 1, 0.8 * a))
-		_text(Vector2(x + kw + 64, y + 21), victim, 16, Color(vc.lightened(0.35), a * 0.85))
-		y += 35.0
+		_panel(Rect2(x, y, w, h), Color(0.04, 0.06, 0.09, 0.82 * a), Color(GOLD, 0.85 * a) if mine else Color(1, 1, 1, 0.1 * a),
+			16, 2 if mine else 1)
+		var base := y + h / 2.0 + FEED_FS * 0.36
+		if killer != "":
+			_text(Vector2(x + pad, base), killer, FEED_FS, Color(kc.lightened(0.35), a))
+		var ic := Vector2(x + pad + kw + icon_w / 2.0, y + h / 2.0)
+		KnifeArt.draw(cv, ic + Vector2(-12, 0), PI / 2.0, 0.7, 0, false)
+		_skull(ic + Vector2(17, -2), 5.5, Color(1, 1, 1, 0.85 * a))
+		_text(Vector2(x + pad + kw + icon_w, base), victim, FEED_FS, Color(vc.lightened(0.35), a * 0.9))
+		y += h + 7.0
+	_draw_kill_toast(s)
 
+
+## Senin leşin: ekranın alt-ortasında büyük bildirim ("LEŞ!  Ali" + seri). 2.5 sn kalır, yenisi eskisinin yerini alır.
+var _toast_name := ""
+var _toast_col := Color.WHITE
+var _toast_streak := 0
+var _toast_at := -10.0
+
+
+func show_kill_toast(victim: String, col: Color, streak: int) -> void:
+	_toast_name = victim
+	_toast_col = col
+	_toast_streak = streak
+	_toast_at = Time.get_ticks_msec() / 1000.0
+	_redraw_timer = 0.0
+
+
+func _draw_kill_toast(s: Vector2) -> void:
+	var age := Time.get_ticks_msec() / 1000.0 - _toast_at
+	if age > 2.5 or _toast_name == "":
+		return
+	var a := clampf((2.5 - age) / 0.5, 0.0, 1.0)
+	var pop := 1.0 + maxf(0.0, 0.15 - age) * 3.0
+	var label := Loc.t("kill_popup")
+	var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x
+	var nw := font.get_string_size(_toast_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+	var extra := ("  x%d" % _toast_streak) if _toast_streak >= 2 else ""
+	var ew := font.get_string_size(extra, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
+	var w := 20.0 + 26.0 + lw + 16.0 + nw + ew + 22.0
+	var c := Vector2(s.x / 2.0, s.y - 230.0)
+	cv.draw_set_transform(c, 0.0, Vector2(pop, pop))
+	_panel(Rect2(-w / 2.0, -24, w, 48), Color(0.35, 0.05, 0.05, 0.85 * a), Color(1, 0.45, 0.35, a), 24, 2, 6)
+	var x := -w / 2.0 + 20.0
+	_skull(Vector2(x + 10, -2), 9.0, Color(1, 1, 1, a))
+	x += 26.0
+	_text(Vector2(x, 10), label, 26, Color(1, 0.5, 0.4, a))
+	x += lw + 16.0
+	_text(Vector2(x, 9), _toast_name, 24, Color(_toast_col.lightened(0.35), a))
+	if extra != "":
+		_text(Vector2(x + nw, 9), extra, 22, Color(GOLD, a))
+	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 ## Bekleme süresi göstergesi: kalan oran kadar kararan pasta dilimi (saat yönünde açılır).
 func _pie(c: Vector2, r: float, ratio: float, col: Color) -> void:

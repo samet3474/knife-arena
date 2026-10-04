@@ -57,7 +57,7 @@ const SNAPSHOT_RATE := 20.0
 const INPUT_RATE := 30.0
 const MP_MIN_FIGHTERS := 10
 ## Çok oyunculuda arenadaki en fazla savaşçı (oyuncu + bot). Ücretsiz sunucunun akıcı kaldırdığı sayı.
-const MP_MAX_FIGHTERS := 13
+const MP_MAX_FIGHTERS := 10
 const CONNECT_TIMEOUT := 8.0
 const BOT_NAMES := [
 	"Battal", "Alp", "Hançer", "Bıçkın", "Keskin", "Satır", "Bora", "Pala", "Şimşek",
@@ -137,7 +137,12 @@ var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
 const NET_VERSION := 6
 var name_taken := "" # sunucunun "başkasına ait" dediği isim (değiştirilene kadar)
-var host_override := "" # yalnızca test: --host=<adres> (kaydedilmez)
+var host_override := ""
+var srv_load_acc := 0 # sunucu: ölçüm penceresindeki toplam süre (mikro sn)
+var srv_load_frames := 0
+var srv_load_timer := 0.0
+var srv_load_ms := 0.0 # sunucu: son 5 sn ortalama kare süresi
+var srv_fps := 0.0 # yalnızca test: --host=<adres> (kaydedilmez)
 var test_move := false # test: karakter kendiliğinden yürür, konum ve görüntü sayısı yazılır
 var test_snaps := 0
 var test_timer := 0.0
@@ -339,6 +344,13 @@ func _apply_test_args(args: PackedStringArray) -> void:
 				hud.open_shop(which)
 	if "--scoreboard" in args:
 		hud.scoreboard_open = true
+	if "--feed-test" in args:
+		# Test: örnek leş bildirimleri
+		var cols := GameData.PLAYER_COLORS
+		for i in 3:
+			kill_feed.append({"killer": ["Kartal", "Samet", "Bora"][i], "victim": ["Tilki", "Kaya", "Gölge"][i],
+				"killer_col": cols[i], "victim_col": cols[i + 4], "mine": i == 1, "time": round_time - i * 1.5})
+		hud.show_kill_toast.call_deferred("Kaya", cols[5], 3)
 	if "--bigmap" in args:
 		hud.bigmap_open = true
 	for a in args:
@@ -652,7 +664,7 @@ func _reset_match_stats() -> void:
 func _build_world() -> void:
 	_spawn_bushes()
 	canopy_dirty = true
-	while crates.size() < CRATE_TARGET:
+	while crates.size() < _crate_target():
 		_spawn_crate()
 	while pickups.size() < _pickup_target():
 		_spawn_pickup(_random_point(ARENA_RADIUS - 60.0), Vector2.ZERO)
@@ -973,7 +985,13 @@ func _free_spawn_point() -> Vector2:
 
 
 ## Telefonda yerde daha az bıçak (simülasyon ve çizim yükü azalır).
+func _crate_target() -> int:
+	return 30 if net_mode == "server" else CRATE_TARGET
+
+
 func _pickup_target() -> int:
+	if net_mode == "server":
+		return 170
 	return 190 if low_fx else PICKUP_TARGET
 
 
@@ -1019,7 +1037,25 @@ func _process(delta: float) -> void:
 			if hud_timer <= 0.0:
 				hud_timer = 0.5
 				hud.queue_redraw()
+			var _st := Time.get_ticks_usec()
 			_server_process(delta)
+			srv_load_acc += Time.get_ticks_usec() - _st
+			srv_load_frames += 1
+			srv_load_timer += delta
+			if srv_load_timer >= 5.0:
+				srv_load_ms = srv_load_acc / 1000.0 / maxi(1, srv_load_frames)
+				srv_fps = srv_load_frames / srv_load_timer
+				if "--perf" in OS.get_cmdline_user_args():
+					print("SUNUCU YUK: %.2f ms/kare, %.1f kare/sn, %d savaşçı, %d bağlantı" % [srv_load_ms, srv_fps,
+						_alive_fighters().size(), multiplayer.get_peers().size()])
+					var parts := PackedStringArray()
+					for k in perf_acc.keys():
+						parts.append("%s=%.2f" % [k, float(perf_acc[k]) / 1000.0 / maxi(1, srv_load_frames)])
+					print("   bölümler (ms/kare): ", ", ".join(parts))
+					perf_acc.clear()
+				srv_load_acc = 0
+				srv_load_frames = 0
+				srv_load_timer = 0.0
 			return
 	hud.tick(delta)
 	if perf_log:
@@ -1076,6 +1112,7 @@ func _redraw_layers() -> void:
 ## Ortak simülasyon adımı (tek oyunculu ve sunucu).
 func _simulate(delta: float) -> void:
 	var limit := ARENA_RADIUS - Fighter.BODY_RADIUS
+	var _pt := Time.get_ticks_usec()
 	for f in fighters:
 		if not f.alive:
 			continue
@@ -1100,13 +1137,22 @@ func _simulate(delta: float) -> void:
 		for f in fighters:
 			if f.alive:
 				f.in_bush = _bush_at(f.position) >= 0
+	perf_mark("s_fighters_bots", _pt)
+	_pt = Time.get_ticks_usec()
 	_update_pickups(delta)
+	perf_mark("s_pickups", _pt)
+	_pt = Time.get_ticks_usec()
 	_update_coins(delta)
 	_update_powerups()
 	_update_crates()
 	_update_hazards(delta)
+	perf_mark("s_items", _pt)
+	_pt = Time.get_ticks_usec()
 	_resolve_combat()
+	perf_mark("s_combat", _pt)
+	_pt = Time.get_ticks_usec()
 	_update_projectiles(delta)
+	perf_mark("s_projectiles", _pt)
 
 
 ## Savaşçının etrafındaki sürekli görsel efektler (toz, alan dumanı, efektli bıçak parçacıkları).
@@ -1326,7 +1372,8 @@ func _present_kill(ev: Dictionary) -> void:
 	_sfx_at("death", pos, mine)
 	if player != null and killer == player:
 		sfx.play("kill", 0.0, 0.0)
-		_fx_text(pos + Vector2(0, -60), Loc.t("kill_popup"), Color(1, 0.4, 0.3), 38)
+		_fx_text(pos + Vector2(0, -60), Loc.t("kill_popup"), Color(1, 0.4, 0.3), 32)
+		hud.show_kill_toast(String(ev["vname"]), vcol, int(ev["streak"]))
 		if net_mode == "":
 			_hitstop(0.07)
 		_announce_streak(int(ev["multi"]), int(ev["streak"]))
@@ -1617,9 +1664,19 @@ func _footsteps(delta: float) -> void:
 
 func _update_pickups(delta: float) -> void:
 	var magnets: Array[Fighter] = []
+	# Bıçak toplayabilecek savaşçıların konumları bir kez listelenir (her bıçak için savaşçı
+	# özelliklerine tek tek bakmak sunucuda en pahalı işti)
+	var col_pos := PackedVector2Array()
+	var col_f: Array[Fighter] = []
+	var r2 := PICKUP_RADIUS * PICKUP_RADIUS
 	for f in fighters:
-		if f.alive and f.magnet_t > 0.0:
+		if not f.alive:
+			continue
+		if f.magnet_t > 0.0:
 			magnets.append(f)
+		if f.knives < Fighter.MAX_KNIVES:
+			col_pos.append(f.position)
+			col_f.append(f)
 	for i in range(pickups.size() - 1, -1, -1):
 		var p := pickups[i]
 		var vel: Vector2 = p["vel"]
@@ -1635,13 +1692,16 @@ func _update_pickups(delta: float) -> void:
 			if pos.distance_squared_to(m.position) < Fighter.MAGNET_RADIUS * Fighter.MAGNET_RADIUS:
 				pos = pos.move_toward(m.position, 650.0 * delta)
 		p["pos"] = pos
-		for f in fighters:
-			if f.alive and f.knives < Fighter.MAX_KNIVES \
-					and pos.distance_squared_to(f.position) < PICKUP_RADIUS * PICKUP_RADIUS:
+		for j in col_pos.size():
+			if pos.distance_squared_to(col_pos[j]) < r2:
+				var f: Fighter = col_f[j]
 				f.knives += 1
 				pickups.remove_at(i)
 				if _is_human(f):
 					_emit({"t": "pick", "f": f.net_id, "pos": pos})
+				if f.knives >= Fighter.MAX_KNIVES:
+					col_pos.remove_at(j)
+					col_f.remove_at(j)
 				break
 
 
@@ -2028,7 +2088,7 @@ func _maintain_world(delta: float) -> void:
 		_spawn_pickup(_random_point(zone_radius - 40.0), Vector2.ZERO)
 	if powerups.size() < POWERUP_MAX and randf() < delta / 4.0:
 		_spawn_powerup()
-	if crates.size() < CRATE_TARGET and randf() < delta / 3.0:
+	if crates.size() < _crate_target() and randf() < delta / 3.0:
 		_spawn_crate()
 	# Dev Boss: belli aralıklarla tek bir boss çıkar (tek oyunculuda arenada yeterince kişi varsa)
 	if not in_menu() and round_time >= next_boss_time and (net_mode == "server" or alive_count() >= 4):
@@ -2268,7 +2328,9 @@ func _server_process(delta: float) -> void:
 		snapshot_timer = 0.0
 		# Yalnızca oyuna girmiş oyunculara (menüdeki lobi/sohbet bağlantılarına gönderilmez)
 		if not peers.is_empty():
+			var _sn := Time.get_ticks_usec()
 			var snap := _build_snapshot()
+			perf_mark("s_snapshot_build", _sn)
 			var connected := multiplayer.get_peers()
 			for pid in peers.keys():
 				if connected.has(pid):
@@ -2458,11 +2520,19 @@ func _deliver_pending(key: String) -> void:
 			return
 
 
+func _count_where(where: String) -> int:
+	var n := 0
+	for s in sessions.values():
+		if String(s.get("where", "")) == where:
+			n += 1
+	return n
+
+
 ## Yönetim paneli: kaydı olan tüm oyuncular (en son görülen üstte).
 func _registry() -> Array:
 	var online := {}
 	for peer in sessions.keys():
-		online[String(sessions[peer]["n"]).to_lower()] = true
+		online[String(sessions[peer]["n"]).to_lower()] = String(sessions[peer].get("where", "menu"))
 	var all: Array = records.keys()
 	all.sort_custom(func(a: String, b: String) -> bool:
 		return int(records[a].get("first_u", records[a].get("seen_u", 0))) < int(records[b].get("first_u", records[b].get("seen_u", 0))))
@@ -2472,7 +2542,8 @@ func _registry() -> Array:
 		out.append({"k": String(key).to_utf8_buffer().hex_encode(), "n": r.get("n", key), "l": int(r.get("l", 1)),
 			"c": int(r.get("c", 0)), "kills": int(r.get("sk", 0)) + int(r.get("mk", 0)), "seen": r.get("seen", "-"),
 			"first": r.get("first", r.get("seen", "-")), "owned": String(r.get("owner", "")) != "",
-			"dev": r.get("dev", ""), "on": online.has(key), "pend": not (r.get("pend", {}) as Dictionary).is_empty()})
+			"dev": r.get("dev", ""), "on": online.has(key), "where": online.get(key, ""),
+			"pend": not (r.get("pend", {}) as Dictionary).is_empty()})
 	return out
 
 
@@ -2803,7 +2874,9 @@ func server_top_request(peer: int, info: Dictionary, seed: Dictionary) -> void:
 		_session(peer, anon, "menu")
 		sessions[peer]["ok"] = false
 		return
-	_session(peer, info, "menu")
+	_session(peer, info, String(info.get("where", "menu")))
+	if sessions.has(peer):
+		sessions[peer]["where"] = String(info.get("where", "menu"))
 	if fname != "" and sessions.has(peer):
 		sessions[peer]["n"] = fname
 		sessions[peer]["ok"] = true
@@ -3086,6 +3159,7 @@ const LB_TIMEOUT := 75.0
 const LOBBY_RETRY := 20.0
 var lb_fetching := false # lobi bağlantısı açık ya da açılıyor
 var lobby_online := false # sunucu cevap verdi (skor tablosu geldi): sohbet ve çok oyunculu hazır
+var lobby_where := "menu" # sunucuya en son bildirilen durum
 var lobby_state := "" # "" | connecting | ready | offline | outdated (menüde gösterilir)
 var lobby_connected_at := -1.0
 var online_count := 0 # sunucuya göre arenadaki oyuncu sayısı
@@ -3128,9 +3202,11 @@ func _stop_lb_fetch() -> void:
 			net.close()
 
 
-## İsimsiz oyuncular tabloya yazılmaz (yalnızca liste istenir).
+## İsimsiz oyuncular tabloya yazılmaz (yalnızca liste istenir). "where": menüde mi, tek oyunculuda mı.
 func _top_info() -> Dictionary:
-	return _join_info() if String(save["player_name"]).strip_edges() != "" else {}
+	var info := _join_info() if String(save["player_name"]).strip_edges() != "" else {}
+	info["where"] = "menu" if state == "menu" else "sp"
+	return info
 
 
 ## Menüdeyken lobi bağlantısını açık tutar; oyuna (tek oyunculu) girince kapatır.
@@ -3138,9 +3214,14 @@ func _lobby_tick() -> void:
 	if net_mode != "" or no_lobby:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
-	if state != "menu":
+	if state in ["connecting", "admin", "admin_wait", "admin_login", "splash"]:
 		_stop_lb_fetch()
 		return
+	# Durum değişince (menü <-> tek oyunculu) sunucuya bildir: yönetim panelinde görünsün
+	var where := "menu" if state == "menu" else "sp"
+	if lobby_online and where != lobby_where:
+		lobby_where = where
+		net.c_top.rpc_id(1, _top_info(), {})
 	if lb_fetching and not lobby_online and now - lb_started > LB_TIMEOUT:
 		_stop_lb_fetch()
 		lobby_state = "offline"
@@ -4129,7 +4210,8 @@ func admin_data() -> Dictionary:
 		"alive": alive_count(), "joins": total_joins, "admins": admin_peers.size(), "log": server_log.slice(0, 30),
 		"zone": zone_on, "zone_r": int(zone_radius),
 		"chat": chat_log.slice(maxi(0, chat_log.size() - 14)), "chat_locked": chat_locked, "muted": muted.values(),
-		"lb_count": records.size(), "menu_count": chat_peers.size(), "cloud": cloud != null and cloud.enabled,
+		"lb_count": records.size(), "menu_count": _count_where("menu"), "sp_count": _count_where("sp"),
+		"cloud": cloud != null and cloud.enabled, "load_ms": srv_load_ms, "srv_fps": srv_fps,
 		"conn": conn_log.slice(maxi(0, conn_log.size() - 80)), "reg": _registry(),
 	}
 
