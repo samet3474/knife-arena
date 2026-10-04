@@ -56,6 +56,8 @@ const BUSH_REVEAL := 160.0
 const SNAPSHOT_RATE := 20.0
 const INPUT_RATE := 30.0
 const MP_MIN_FIGHTERS := 10
+## Çok oyunculuda arenadaki en fazla savaşçı (oyuncu + bot). Ücretsiz sunucunun akıcı kaldırdığı sayı.
+const MP_MAX_FIGHTERS := 13
 const CONNECT_TIMEOUT := 8.0
 const BOT_NAMES := [
 	"Battal", "Alp", "Hançer", "Bıçkın", "Keskin", "Satır", "Bora", "Pala", "Şimşek",
@@ -96,7 +98,7 @@ var boxes_opened := 0
 var level_ups: Array[int] = [] # son maçta atlanan seviyeler (sonuç ekranı için)
 var match_coins := 0
 var next_boss_time := 55.0
-const BOSS_REWARD := 40
+const BOSS_REWARD := 30
 var last_reward := {}
 var daily_message := ""
 var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills": 0, "wins": 0,
@@ -121,7 +123,7 @@ var server_urls: Array[String] = [] # sunucu penceresinde gösterilen telefon ad
 var hud_timer := 0.0
 var cooldown_prune_timer := 0.0
 # Yönetim paneli
-var bot_target := MP_MIN_FIGHTERS - 1
+var bot_target := MP_MAX_FIGHTERS - 1 # en fazla bot (oyuncu geldikçe otomatik azalır)
 var server_log: Array[Dictionary] = []
 var peer_info := {} # bağlantı → {"name", "ip", "since", "info"}
 var total_joins := 0
@@ -932,7 +934,7 @@ func _spawn_pickup(pos: Vector2, vel: Vector2) -> void:
 func _spawn_powerup() -> void:
 	powerups.append({
 		"pos": _random_point(zone_radius - 120.0),
-		"type": GameData.POWERUPS.keys().pick_random(),
+		"type": GameData.MAP_POWERUPS.pick_random(),
 		"phase": randf() * TAU,
 	})
 
@@ -1334,7 +1336,16 @@ func _update_crates() -> void:
 		c["shake"] = maxf(0.0, float(c["shake"]) - get_process_delta_time() * 4.0)
 		var cpos: Vector2 = c["pos"]
 		for f in fighters:
-			if not f.alive or f.knives <= 0:
+			if not f.alive:
+				continue
+			if f.knives <= 0:
+				# Bıçağı olmayan oyuncu kutuya değince yumruklar (daha yavaş kırılır)
+				if f.position.distance_to(cpos) < CRATE_SIZE * 0.5 + f.body_r() + 14.0:
+					if _ready_cd("p%d_%d" % [f.get_instance_id(), int(cpos.x * 10 + cpos.y)], 0.55):
+						f.squash = 0.6
+						_hit_crate(i, cpos + (f.position - cpos).normalized() * CRATE_SIZE * 0.5, f)
+						if i >= crates.size() or crates[i] != c:
+							break
 				continue
 			# Dönen bıçak halkası sandığa sürtünürse sandık hasar alır
 			if absf(f.position.distance_to(cpos) - f.ring_radius()) < CRATE_SIZE * 0.5:
@@ -1371,12 +1382,16 @@ func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 			_spawn_coins(pos, randi_range(3, 6))
 		"powerup":
 			if opener != null:
-				var type: String = ["speed", "shield", "magnet", "heal"].pick_random()
+				var type: String = ["speed", "magnet", "heal"].pick_random()
 				pu_type = type
 				_apply_powerup(opener, type)
 		"rage":
 			if opener != null:
 				opener.rage_t = 7.0
+		"infinity", "shield", "bombitem":
+			# Kutudan çıkan özel güçler (haritada doğrudan çıkmaz)
+			if opener != null:
+				_apply_powerup(opener, "bomb" if id == "bombitem" else id)
 		"shoes":
 			if opener != null:
 				opener.speed_t = maxf(opener.speed_t, SHOES_TIME)
@@ -2176,11 +2191,13 @@ func _server_process(delta: float) -> void:
 	for f in fighters:
 		if f.alive and f.peer_id == 0 and not f.boss:
 			bots.append(f)
+	# Arenadaki toplam savaşçı sabit kalır (sunucu kasmasın): her gelen oyuncu bir botun yerini alır
+	var want_bots := clampi(MP_MAX_FIGHTERS - peers.size(), 0, bot_target)
 	bot_spawn_timer -= delta
-	if bots.size() < bot_target and bot_spawn_timer <= 0.0:
+	if bots.size() < want_bots and bot_spawn_timer <= 0.0:
 		bot_spawn_timer = 1.0
 		_spawn_bot(BOT_NAMES.pick_random())
-	elif bots.size() > bot_target:
+	elif bots.size() > want_bots:
 		var extra := bots[bots.size() - 1]
 		extra.alive = false
 		extra.visible = false
@@ -2206,6 +2223,12 @@ func _server_process(delta: float) -> void:
 
 
 func server_join(peer: int, info: Dictionary) -> void:
+	# Sunucu dolu: yeni oyuncu alınmaz (oyundakiler akıcı oynasın)
+	if not peers.has(peer) and peers.size() >= MP_MAX_FIGHTERS:
+		net.s_announce.rpc_id(peer, "Sunucu şu an dolu, biraz sonra tekrar dene")
+		slog("Sunucu dolu: %s alınamadı" % String(info.get("name", "?")), Color(1, 0.6, 0.4))
+		get_tree().create_timer(0.5).timeout.connect(net.kick.bind(peer))
+		return
 	var skin_id := String(info.get("skin", "skin_keloglan"))
 	if GameData.skin_index(skin_id) == 0 and skin_id != GameData.SKINS[0]["id"]:
 		skin_id = GameData.SKINS[0]["id"]

@@ -788,7 +788,8 @@ func _draw_server(s: Vector2) -> void:
 	var ct := Rect2(lx, st.end.y + gap, lw, 296)
 	_panel(ct, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
 	_text(Vector2(ct.position.x + 14, ct.position.y + 26), "ARENA KONTROLLERİ", 15, GOLD)
-	_text(Vector2(ct.position.x + 14, ct.position.y + 58), "Bot sayısı", 15, Color.WHITE)
+	_text(Vector2(ct.position.x + 14, ct.position.y + 58), "En çok bot", 15, Color.WHITE)
+	_text(Vector2(ct.position.x + 14, ct.position.y + 74), "(oyuncu girdikçe azalır)", 10, Color(1, 1, 1, 0.45))
 	_button(Rect2(ct.end.x - 150, ct.position.y + 36, 44, 36), "adm_bot_minus", "-", Color(0.55, 0.25, 0.25), true, 22)
 	_text(Vector2(ct.end.x - 104, ct.position.y + 62), str(d.get("bot_target", 0)), 20, GOLD, HORIZONTAL_ALIGNMENT_CENTER, 50.0)
 	_button(Rect2(ct.end.x - 56, ct.position.y + 36, 44, 36), "adm_bot_plus", "+", Color(0.22, 0.6, 0.33), true, 22)
@@ -1817,20 +1818,25 @@ func _draw_stats(s: Vector2) -> void:
 	_draw_player_card(p)
 	main.perf_mark("hud_card", _t)
 	_t = Time.get_ticks_usec()
-	var mm := Rect2(16, 62, 168, 168)
+	var mm := Rect2(s.x - 16 - 168, 14, 168, 168)
 	_draw_minimap(mm)
 	buttons.append({"rect": mm, "id": "bigmap", "enabled": true})
 	main.perf_mark("hud_minimap", _t)
 	_t = Time.get_ticks_usec()
 
-	# Aktif güçlendirme süreleri (mini haritanın sağında)
-	var y := 86.0
+	# Aktif güçlendirme süreleri: ekranın alt ortasında yatay sıra (simge, dolan halka, kalan saniye)
+	var active := []
 	for entry in [["infinity", p.inf_t], ["speed", p.speed_t], ["shield", p.shield_t], ["magnet", p.magnet_t], ["rage", p.rage_t], ["slow", p.slow_t]]:
+		if float(entry[1]) > 0.0:
+			active.append(entry)
+	var slot := 78.0
+	var x0 := s.x / 2.0 - (active.size() - 1) * slot / 2.0
+	for ai in active.size():
+		var entry: Array = active[ai]
 		var left: float = entry[1]
-		if left <= 0.0:
-			continue
-		var c := Vector2(212, y)
-		GameData.disc(cv, c, 22.0, Color(0, 0, 0, 0.5))
+		var c := Vector2(x0 + ai * slot, s.y - 74.0)
+		_panel(Rect2(c.x - 34, c.y - 32, 68, 82), Color(0, 0, 0, 0.45), Color(1, 1, 1, 0.12), 14, 1)
+		GameData.disc(cv, c, 24.0, Color(0, 0, 0, 0.5))
 		var info: Dictionary = GameData.POWERUPS.get(entry[0], {})
 		var icon: Texture2D = GameData.tex(info["icon"]) if not info.is_empty() else null
 		var ring_col: Color = info["color"] if not info.is_empty() else (Color(1, 0.3, 0.2) if entry[0] == "rage" else Color(0.5, 0.75, 1))
@@ -1841,9 +1847,8 @@ func _draw_stats(s: Vector2) -> void:
 			GameData.draw_infinity(cv, c, 0.8, info["color"])
 		else:
 			GameData.disc(cv, c, 12.0, ring_col)
-		cv.draw_arc(c, 22.0, -PI / 2, -PI / 2 + TAU * clampf(left / dur, 0.0, 1.0), 32, ring_col, 4.0)
-		_text(Vector2(c.x + 26, c.y + 6), "%d" % ceili(left), 15, Color.WHITE)
-		y += 52.0
+		cv.draw_arc(c, 24.0, -PI / 2, -PI / 2 + TAU * clampf(left / dur, 0.0, 1.0), 32, ring_col, 4.0)
+		_text(Vector2(c.x - 30, c.y + 44), "%d sn" % ceili(left), 15, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 60.0)
 
 	main.perf_mark("hud_powerups", _t)
 	_t = Time.get_ticks_usec()
@@ -1861,25 +1866,26 @@ func _draw_stats(s: Vector2) -> void:
 	# Sağ üst: liderler ve duraklatma
 	# Sağ üst: liderler (sıra, seviye, isim, leş, bıçak). Dokununca tam skor tablosu açılır.
 	var board: Array[Fighter] = main.leaderboard(5)
-	var pw := 290.0
-	var lx := s.x - pw - 14.0
-	var lb := Rect2(lx, 14, pw, 42 + board.size() * 28)
+	var pw := 270.0
+	var lx := 16.0
+	var ly := 62.0
+	var lb := Rect2(lx, ly, pw, 40 + board.size() * 27)
 	_panel(lb, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
-	_text(Vector2(lx + 14, 38), Loc.t("leaders"), 17, GOLD)
-	_skull(Vector2(lx + pw - 84, 32), 6.0, Color(1, 0.6, 0.55))
-	KnifeArt.draw(cv, Vector2(lx + pw - 30, 31), PI / 4.0, 0.55, 0, false)
+	_text(Vector2(lx + 14, ly + 25), Loc.t("leaders") + "  >", 17, GOLD)
+	_skull(Vector2(lx + pw - 84, ly + 18), 6.0, Color(1, 0.6, 0.55))
+	KnifeArt.draw(cv, Vector2(lx + pw - 30, ly + 17), PI / 4.0, 0.55, 0, false)
 	for i in board.size():
 		var f := board[i]
 		var col := Color(1, 0.92, 0.3) if f.is_player else Color.WHITE
-		var ry := 66.0 + i * 28.0
+		var ry := ly + 52.0 + i * 27.0
 		_text(Vector2(lx + 10, ry), "%d" % (i + 1), 15, Color(1, 1, 1, 0.6))
 		_level_badge(Vector2(lx + 40, ry - 6), 11.0, f.level)
 		_text(Vector2(lx + 58, ry), f.display_name, _fit_size(f.display_name, 16, 130.0), col)
 		_text(Vector2(lx + pw - 104, ry), str(f.kills), 16, Color(1, 0.6, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 40.0)
 		_text(Vector2(lx + pw - 50, ry), str(f.knives), 16, col, HORIZONTAL_ALIGNMENT_CENTER, 40.0)
-	buttons.append({"rect": lb, "id": "scoreboard", "enabled": true})
+	buttons.append({"rect": Rect2(lx, ly, pw, 36), "id": "scoreboard", "enabled": true})
 	if main.state == "playing" and main.net_mode == "":
-		_button(Rect2(lx - 66, 14, 54, 48), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
+		_button(Rect2(mm.position.x - 70, 14, 58, 52), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
 	if scoreboard_open:
 		_draw_scoreboard(s)
 	if bigmap_open:

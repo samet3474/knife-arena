@@ -58,6 +58,9 @@ const QUESTS := [
 ]
 const DAILY_QUEST_COUNT := 3
 
+## Haritada doğrudan çıkan temel güçlendirmeler (özel güçler yalnızca gizemli kutulardan çıkar)
+const MAP_POWERUPS := ["heal", "knives", "speed", "magnet", "knives", "heal"]
+
 const POWERUPS := {
 	"speed": {"icon": "pu_speed", "color": Color(1, 0.85, 0.2), "duration": 6.0},
 	"shield": {"icon": "pu_shield", "color": Color(0.35, 0.7, 1), "duration": 5.0},
@@ -69,9 +72,9 @@ const POWERUPS := {
 }
 
 ## Ekonomi: maç sonu ödülleri (altın).
-const COIN_PER_KILL := 4
-const RANK_BONUS := [30, 20, 14, 10, 8] # 1.-5. sıra; daha aşağısı RANK_BONUS_REST
-const RANK_BONUS_REST := 4
+const COIN_PER_KILL := 3
+const RANK_BONUS := [25, 15, 10, 7, 5] # 1.-5. sıra; daha aşağısı RANK_BONUS_REST
+const RANK_BONUS_REST := 2
 const DAILY_BONUS := 30
 const STARTING_COINS := 40
 
@@ -87,7 +90,10 @@ const MYSTERY := [
 	{"id": "knives", "good": true, "weight": 22},
 	{"id": "coins", "good": true, "weight": 18},
 	{"id": "powerup", "good": true, "weight": 16},
-	{"id": "rage", "good": true, "weight": 9},
+	{"id": "rage", "good": true, "weight": 8},
+	{"id": "infinity", "good": true, "weight": 9},
+	{"id": "shield", "good": true, "weight": 9},
+	{"id": "bombitem", "good": true, "weight": 8},
 	{"id": "shoes", "good": true, "weight": 13},
 	{"id": "bomb", "good": false, "weight": 14},
 	{"id": "slow", "good": false, "weight": 8},
