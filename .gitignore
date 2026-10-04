@@ -1,0 +1,5 @@
+# Godot'nun kendi önbelleği (her bilgisayarda yeniden oluşur)
+.godot/
+# Yerel dışa aktarma çıktısı (yayın sürümü docs/ klasöründe)
+build/
+*.tmp

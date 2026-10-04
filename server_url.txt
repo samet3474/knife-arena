@@ -1,0 +1,1 @@
+wss://knife-arena-server.onrender.com
