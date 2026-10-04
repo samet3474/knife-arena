@@ -3,15 +3,15 @@ extends Node
 ## Aynı sesin birden çok varyasyonu varsa rastgele biri çalınır.
 
 const SOUND_DIR := "res://assets/sounds/"
-const VARIANTS := {"throw": 4, "pickup": 3, "step": 4, "clash": 5, "hit": 5, "death": 5, "block": 4, "coin": 2}
-const SINGLES := ["click", "select", "error", "powerup", "kill", "zone", "win", "lose", "unlock", "buy"]
+const VARIANTS := {"throw": 4, "pickup": 3, "step": 4, "clash": 5, "hit": 5, "death": 5, "block": 4, "coin": 2, "crate": 3}
+const SINGLES := ["click", "select", "error", "powerup", "kill", "zone", "win", "lose", "unlock", "buy", "crate_break"]
 ## Seslerin temel ses seviyeleri (dB); dosyalar arasındaki farkı dengeler.
 ## Sık çalan sesler (adım, bıçak çarpışması, toplama) kulağı yormasın diye kısık.
 const BASE_DB := {"pickup": -17.0, "step": -21.0, "throw": -9.0, "clash": -13.0, "block": -11.0, "hit": -7.0,
 	"death": -5.0, "click": -7.0, "select": -9.0, "powerup": -5.0, "kill": -4.0, "zone": -4.0, "coin": -6.0,
-	"win": -3.0, "lose": -5.0, "unlock": -3.0, "buy": -4.0, "error": -8.0}
+	"win": -3.0, "lose": -5.0, "unlock": -3.0, "buy": -4.0, "error": -8.0, "crate": -8.0, "crate_break": -4.0}
 ## Aynı sesin tekrar çalınabilmesi için gereken süre (ms): üst üste binen sesler cızırtı gibi duyulur.
-const MIN_GAP := {"clash": 90, "pickup": 70, "step": 120, "hit": 60, "block": 90, "coin": 60}
+const MIN_GAP := {"clash": 90, "pickup": 70, "step": 120, "hit": 60, "block": 90, "coin": 60, "crate": 80}
 ## Aynı anda en fazla kaç kopyası çalabilir.
 const MAX_SAME := 3
 

@@ -294,8 +294,11 @@ func _ready() -> void:
 		state = "splash"
 	_apply_test_args(args)
 	no_lobby = "--no-lb" in args
+	# Rehber yalnızca ilk açılışta kendiliğinden açılır; hemen "görüldü" sayılır (sonra menüdeki ? ile)
 	if state == "menu" and not save["seen_help"] and not "--screenshot" in " ".join(args):
 		hud.popup = "help"
+		save["seen_help"] = true
+		_write_save()
 
 
 func _startup_log(part: String, start_ms: int) -> void:
@@ -351,6 +354,17 @@ func _apply_test_args(args: PackedStringArray) -> void:
 				hud.open_shop(which)
 	if "--scoreboard" in args:
 		hud.scoreboard_open = true
+	if "--clash-test" in args and player != null:
+		# Test: iki bıçaklı savaşçı iç içe başlar; halkalar birbirini itmeli ve bıçaklar azalmalı
+		var d := _spawn_bot("Test")
+		player.knives = 10
+		d.knives = 10
+		d.aggression = 0.0
+		d.position = player.position + Vector2(30, 0)
+		print("CLASH baslangic: mesafe=%d, bicak=%d/%d" % [player.position.distance_to(d.position), player.knives, d.knives])
+		get_tree().create_timer(2.0).timeout.connect(func() -> void:
+			print("CLASH 2 sn sonra: mesafe=%d, bicak=%d/%d, can=%d/%d" % [player.position.distance_to(d.position),
+				player.knives, d.knives, player.hp, d.hp]))
 	if "--feed-test" in args:
 		# Test: örnek leş bildirimleri
 		var cols := GameData.PLAYER_COLORS
@@ -1239,7 +1253,7 @@ func _present(ev: Dictionary) -> void:
 					c["shake"] = 1.0
 			if _near_camera(at):
 				_fx_sparks(at, Color(0.85, 0.6, 0.35), 6, 260.0, 3.0)
-			_sfx_at("block", at, _fid(ev["o"]) == player and player != null)
+			_sfx_at("crate", at, _fid(ev["o"]) == player and player != null)
 		"crate_break":
 			var pos: Vector2 = ev["pos"]
 			var mine := player != null and _fid(ev["o"]) == player
@@ -1250,7 +1264,7 @@ func _present(ev: Dictionary) -> void:
 						"life": life, "max": life, "col": Color(0.7, 0.45, 0.22), "rot": randf() * TAU, "spin": randf_range(-12.0, 12.0)})
 				_fx_smoke(pos, 5, Color(0.8, 0.7, 0.55, 0.6))
 				_fx_ring(pos, Color(1, 0.85, 0.6), 60.0, 0.3, 4.0)
-			_sfx_at("death", pos, mine)
+			_sfx_at("crate_break", pos, mine)
 			if mine:
 				add_shake(5.0)
 		"box":
@@ -1794,15 +1808,24 @@ func _resolve_combat() -> void:
 				var push := (a.body_r() + b.body_r() - d) * 0.5
 				a.position -= dir * push
 				b.position += dir * push
-			# Bıçak halkaları çarpışırsa iki taraf da bıçak kaybeder
-			if a.knives > 0 and b.knives > 0 and d <= ra + rb and d >= absf(ra - rb):
-				if _ready_cd("c%d_%d" % [a.get_instance_id(), b.get_instance_id()], 0.14):
-					var at := (a.position + dir * ra + b.position - dir * rb) * 0.5
-					_lose_knife(a, at)
-					_lose_knife(b, at)
+			# İkisinin de bıçağı varsa (Knife.io kuralı): halkalar birbirine dayanır, gövdeler yaklaşamaz;
+			# halkalar sürtündükçe iki taraf da bıçak kaybeder. Bıçağı biten korumasız kalır.
+			if a.knives > 0 and b.knives > 0:
+				var min_d := maxf(ra, rb) + 6.0
+				if d < min_d:
+					var push2 := (min_d - d) * 0.5
+					a.position -= dir * push2
+					b.position += dir * push2
+					d = min_d
+				if d <= ra + rb and _ready_cd("c%d_%d" % [a.get_instance_id(), b.get_instance_id()], 0.14):
+					var at2 := (a.position + dir * ra + b.position - dir * rb) * 0.5
+					_lose_knife(a, at2)
+					_lose_knife(b, at2)
 					a.knock -= dir * 220.0
 					b.knock += dir * 220.0
-					_emit({"t": "clash", "at": at, "a": a.net_id, "b": b.net_id})
+					_emit({"t": "clash", "at": at2, "a": a.net_id, "b": b.net_id})
+				continue
+			# Yalnızca birinin bıçağı var: bıçaklı olan, korumasız rakibe halkasıyla hasar verir
 			_try_ring_hit(a, b, d, dir)
 			_try_ring_hit(b, a, d, -dir)
 
