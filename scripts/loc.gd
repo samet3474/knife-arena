@@ -219,6 +219,7 @@ const TEXT := {
 	"chat_muted": ["Sohbette susturuldun", "You are muted in chat"],
 	"season_reset": ["Yeni sezon başladı! Seviyeler ve skorlar sıfırlandı, karakterlerin seninle", "New season! Levels and scores were reset, your items stay"],
 	"admin_reset_you": ["Yönetici hesabındaki seviye ve skorları sıfırladı", "The admin reset your level and scores"],
+	"name_taken": ["\"%s\" ismi başka bir oyuncuya ait. Lütfen başka bir isim seç", "\"%s\" belongs to another player. Please pick another name"],
 	"chat_title": ["GENEL SOHBET", "GLOBAL CHAT"],
 	"chat_placeholder": ["Mesaj yaz...", "Type a message..."],
 	"chat_connecting": ["bağlanıyor...", "connecting..."],

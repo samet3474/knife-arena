@@ -217,10 +217,12 @@ func _on_name_changed(text: String) -> void:
 func _on_name_submitted(_text: String) -> void:
 	name_edit.release_focus()
 	main._write_save()
+	main.name_changed()
 
 
 func _on_name_focus_exited() -> void:
 	main._write_save()
+	main.name_changed()
 
 
 func _process(delta: float) -> void:
@@ -915,8 +917,9 @@ func _draw_registry(r: Rect2, reg: Array) -> void:
 	var pages := ceili(reg.size() / float(per_page))
 	admin_page = clampi(admin_page, 0, pages - 1)
 	var acts := [["lvdn", "Sv-", Color(0.3, 0.36, 0.5)], ["lvup", "Sv+", Color(0.3, 0.45, 0.85)],
-		["cdn", "-100", Color(0.5, 0.4, 0.2)], ["cup", "+100", Color(0.75, 0.55, 0.12)], ["reset", "Sıfırla", Color(0.7, 0.25, 0.22)]]
-	var bw := 44.0
+		["cdn", "-100", Color(0.5, 0.4, 0.2)], ["cup", "+100", Color(0.75, 0.55, 0.12)], ["reset", "Sıfırla", Color(0.7, 0.25, 0.22)],
+		["free", "Bırak", Color(0.35, 0.45, 0.55)]]
+	var bw := 40.0
 	for i in per_page:
 		var idx := admin_page * per_page + i
 		if idx >= reg.size():
@@ -932,6 +935,8 @@ func _draw_registry(r: Rect2, reg: Array) -> void:
 		var line2 := "Başladı: %s  •  Son: %s  •  %s" % [String(p.get("first", "-")), String(p.get("seen", "-")), String(p.get("dev", ""))]
 		if p.get("pend", false):
 			line2 += "  •  değişiklik bekliyor"
+		if p.get("owned", false):
+			line2 = "🔒 " + line2
 		_text(Vector2(row.position.x + 24, mid + 14), line2, _fit_size(line2, 11, info_w), Color(0.6, 0.85, 1, 0.8))
 		var bx := row.end.x - acts.size() * (bw + 4)
 		for a in acts:

@@ -108,7 +108,7 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
 	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0,
-	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0, "streak": 0}
+	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0, "streak": 0, "uid": ""}
 
 # Çok oyunculu
 var net_mode := ""
@@ -135,7 +135,8 @@ var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
 var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
 var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
-const NET_VERSION := 5
+const NET_VERSION := 6
+var name_taken := "" # sunucunun "başkasına ait" dediği isim (değiştirilene kadar)
 var host_override := "" # yalnızca test: --host=<adres> (kaydedilmez)
 var test_move := false # test: karakter kendiliğinden yürür, konum ve görüntü sayısı yazılır
 var test_snaps := 0
@@ -224,6 +225,7 @@ func _ready() -> void:
 	var _t0 := Time.get_ticks_msec()
 	_load_save()
 	if net_mode != "server":
+		_ensure_uid()
 		_check_daily_bonus()
 		_check_daily_quests()
 	Loc.lang = save["lang"] if save["lang"] != "" else Loc.detect()
@@ -381,6 +383,14 @@ func _load_save() -> void:
 		save["sp_wins"] = int(save["wins"])
 	if not cfg.has_section_key("player", "sp_coins"):
 		save["sp_coins"] = int(save["coins"])
+
+
+## Cihaz kimliği: ilk açılışta üretilen gizli rastgele anahtar. Sunucu bir ismi bu anahtara bağlar;
+## böylece başka bir cihaz aynı ismi alıp o oyuncunun sıralamasını değiştiremez.
+func _ensure_uid() -> void:
+	if String(save["uid"]).length() < 16:
+		save["uid"] = Crypto.new().generate_random_bytes(16).hex_encode()
+		_write_save()
 
 
 func _write_save() -> void:
@@ -743,6 +753,8 @@ func on_button(id: String) -> void:
 			_start_round(true)
 			return
 		"mp":
+			if _blocked_by_name():
+				return
 			# Sunucunun durumu biliniyorsa boşuna bağlanmaya çalışma
 			match lobby_state:
 				"offline":
@@ -2265,6 +2277,11 @@ func _server_process(delta: float) -> void:
 
 
 func server_join(peer: int, info: Dictionary) -> void:
+	var want := String(info.get("name", "")).strip_edges().left(14)
+	if want != "" and not _name_ok(want, info):
+		net.s_name_taken.rpc_id(peer, want)
+		slog("%s ismi başka cihaza ait, giriş reddedildi" % want, Color(1, 0.6, 0.4))
+		return
 	# Sunucu dolu: yeni oyuncu alınmaz (oyundakiler akıcı oynasın)
 	if not peers.has(peer) and peers.size() >= MP_MAX_FIGHTERS:
 		net.s_announce.rpc_id(peer, "Sunucu şu an dolu, biraz sonra tekrar dene")
@@ -2376,6 +2393,10 @@ func _update_record(fname: String, info: Dictionary, level: int) -> void:
 	if not r.has("first_u"):
 		r["first_u"] = int(r.get("seen_u", Time.get_unix_time_from_system()))
 		r["first"] = String(r.get("seen", _now_str()))
+	# İsmi bu cihaza bağla (sahibi yoksa)
+	var uid := String(info.get("uid", ""))
+	if uid != "" and String(r.get("owner", "")) == "":
+		r["owner"] = uid.sha256_text()
 	r["seen"] = _now_str()
 	r["seen_u"] = int(Time.get_unix_time_from_system())
 	r["dev"] = String(info.get("dev", r.get("dev", "?"))).left(30)
@@ -2417,6 +2438,9 @@ func _player_edit(key: String, action: String) -> void:
 			r["l"] = 1
 			pend = {"reset": true}
 			slog("%s: hesabı sıfırlandı (seviye ve skorlar)" % name, Color(1, 0.5, 0.45))
+		"free":
+			r.erase("owner")
+			slog("%s ismi serbest bırakıldı (yeni cihaz alabilir)" % name, Color(0.6, 0.85, 1))
 	r["pend"] = pend
 	records[key] = r
 	_deliver_pending(key)
@@ -2447,7 +2471,7 @@ func _registry() -> Array:
 		var r: Dictionary = records[key]
 		out.append({"k": String(key).to_utf8_buffer().hex_encode(), "n": r.get("n", key), "l": int(r.get("l", 1)),
 			"c": int(r.get("c", 0)), "kills": int(r.get("sk", 0)) + int(r.get("mk", 0)), "seen": r.get("seen", "-"),
-			"first": r.get("first", r.get("seen", "-")),
+			"first": r.get("first", r.get("seen", "-")), "owned": String(r.get("owner", "")) != "",
 			"dev": r.get("dev", ""), "on": online.has(key), "pend": not (r.get("pend", {}) as Dictionary).is_empty()})
 	return out
 
@@ -2526,8 +2550,13 @@ func _session(peer: int, info: Dictionary, where: String) -> void:
 	var dev := String(info.get("dev", "?")).left(30)
 	var loc := String(info.get("loc", "")).left(40)
 	if not sessions.has(peer):
-		sessions[peer] = {"n": fname, "dev": dev, "loc": loc, "since": Time.get_ticks_msec(), "where": where}
+		sessions[peer] = {"n": fname, "dev": dev, "loc": loc, "since": Time.get_ticks_msec(), "where": where,
+			"ok": String(info.get("name", "")).strip_edges() != ""}
 		_conn_add(fname, "giris_" + where, dev, loc)
+	elif String(info.get("name", "")).strip_edges() != "" and not sessions[peer].get("ok", false):
+		# Oyuncu ismini değiştirdi ve yeni ismi geçerli: oturum bu isimle doğrulanır
+		sessions[peer]["n"] = fname
+		sessions[peer]["ok"] = true
 	elif String(sessions[peer]["loc"]) == "" and loc != "":
 		sessions[peer]["loc"] = loc
 	if sessions[peer]["where"] != where and where == "arena":
@@ -2689,6 +2718,10 @@ func server_chat(peer: int, player_name: String, text: String) -> void:
 	if now - float(chat_last.get(peer, -10.0)) < 1.2:
 		return
 	var fname := player_name.strip_edges().left(14)
+	if sessions.has(peer):
+		if not sessions[peer].get("ok", false):
+			return # ismi doğrulanmamış (başkasının ismi ya da isimsiz)
+		fname = String(sessions[peer]["n"])
 	var msg := text.strip_edges().replace("\n", " ").left(CHAT_MAX_LEN)
 	if fname == "" or msg == "" or muted.has(fname.to_lower()):
 		return
@@ -2748,10 +2781,32 @@ func admin_say(text: String) -> void:
 		net.c_admin_say.rpc_id(1, text)
 
 
+## İsim sahipliği: isim ilk kullanan cihaza aittir. Başka cihaz aynı ismi kullanamaz.
+## (Cihaz kimliğinin kendisi değil, özeti saklanır.) Sahibi olmayan eski kayıtlar ilk gelen cihaza bağlanır.
+func _name_ok(fname: String, info: Dictionary) -> bool:
+	var uid := String(info.get("uid", ""))
+	var r = records.get(fname.to_lower())
+	if uid == "" or r == null:
+		return true
+	var owner := String(r.get("owner", ""))
+	return owner == "" or owner == uid.sha256_text()
+
+
 func server_top_request(peer: int, info: Dictionary, seed: Dictionary) -> void:
 	_merge_seed(seed)
-	_session(peer, info, "menu")
 	var fname := String(info.get("name", "")).strip_edges().left(14)
+	if fname != "" and not _name_ok(fname, info):
+		# İsim başkasına ait: kayda yazılmaz, sohbete yazamaz; oyuncu uyarılır
+		net.s_name_taken.rpc_id(peer, fname)
+		var anon := info.duplicate()
+		anon["name"] = ""
+		_session(peer, anon, "menu")
+		sessions[peer]["ok"] = false
+		return
+	_session(peer, info, "menu")
+	if fname != "" and sessions.has(peer):
+		sessions[peer]["n"] = fname
+		sessions[peer]["ok"] = true
 	if fname != "":
 		_update_record(fname, info, clampi(int(info.get("level", 1)), 1, GameData.MAX_LEVEL))
 		_deliver_pending(fname.to_lower())
@@ -3018,7 +3073,7 @@ func _mp_connect() -> void:
 
 func _join_info() -> Dictionary:
 	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"]),
-		"dev": device_name(), "loc": my_location,
+		"dev": device_name(), "loc": my_location, "uid": String(save["uid"]),
 		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"]),
 		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"]),
 		"sc": int(save["sp_coins"]), "mc": int(save["mp_coins"]), "re": int(save["reset_epoch"])}
@@ -3143,7 +3198,7 @@ func client_chat(msgs: Array, reset: bool) -> void:
 
 func send_chat(text: String) -> void:
 	text = text.strip_edges().left(CHAT_MAX_LEN)
-	if text == "":
+	if text == "" or _blocked_by_name():
 		return
 	if String(save["player_name"]).strip_edges() == "":
 		hud.flash_banner(Loc.t("chat_need_name"), Color(1, 0.6, 0.3), 3.0)
@@ -3227,6 +3282,33 @@ func client_welcome(data: Dictionary) -> void:
 
 
 ## Sunucu yöneticisinden gelen hediye (altın / seviye) kendi kaydımıza yazılır.
+## Oyuncu ismini değiştirdi: sunucuya yeni ismin geçerli olup olmadığını sor.
+func name_changed() -> void:
+	if name_taken != "" and name_taken != player_name():
+		name_taken = ""
+	if lobby_online and net_mode == "":
+		net.c_top.rpc_id(1, _top_info(), {})
+
+
+## İsim başkasına aitse uyarır ve true döner (çok oyunculu / sohbet engellenir).
+func _blocked_by_name() -> bool:
+	if name_taken != "" and name_taken == String(save["player_name"]).strip_edges().left(14):
+		hud.flash_banner(Loc.t("name_taken") % name_taken, Color(1, 0.5, 0.4), 4.0)
+		sfx.play("error", 0.0, 0.0)
+		return true
+	return false
+
+
+## Sunucu: bu isim başka bir cihaza ait. Arenaya girilemez, sohbete yazılamaz; başka isim seçilmeli.
+func client_name_taken(fname: String) -> void:
+	name_taken = fname
+	hud.flash_banner(Loc.t("name_taken") % fname, Color(1, 0.5, 0.4), 6.0)
+	sfx.play("error", 0.0, 0.0)
+	if net_mode == "client":
+		_leave_multiplayer()
+		_start_round(false)
+
+
 ## Seviye, XP ve skor istatistiklerini sıfırlar (satın alınan karakterler/bıçaklar ve altın kalır).
 func _reset_progress() -> void:
 	for k in ["total_kills", "wins", "games", "sp_kills", "sp_wins", "mp_kills", "mp_best", "sp_coins", "mp_coins", "xp"]:

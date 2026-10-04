@@ -200,6 +200,12 @@ func s_admin_edit(d: Dictionary) -> void:
 	main.client_admin_edit(d)
 
 
+## Bu isim başka bir cihaza ait (isim sahipliği).
+@rpc("authority", "reliable")
+func s_name_taken(player_name: String) -> void:
+	main.client_name_taken(player_name)
+
+
 func peer_ip(id: int) -> String:
 	if peer == null or not multiplayer.get_peers().has(id):
 		return "?"
