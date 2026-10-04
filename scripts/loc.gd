@@ -196,6 +196,8 @@ const TEXT := {
 	"announce": ["Yönetici: %s", "Admin: %s"],
 	"chat_locked": ["Sohbet şu an yönetici tarafından kapatıldı", "Chat is closed by the admin"],
 	"chat_muted": ["Sohbette susturuldun", "You are muted in chat"],
+	"season_reset": ["Yeni sezon başladı! Seviyeler ve skorlar sıfırlandı, karakterlerin seninle", "New season! Levels and scores were reset, your items stay"],
+	"admin_reset_you": ["Yönetici hesabındaki seviye ve skorları sıfırladı", "The admin reset your level and scores"],
 	"chat_title": ["GENEL SOHBET", "GLOBAL CHAT"],
 	"chat_placeholder": ["Mesaj yaz...", "Type a message..."],
 	"chat_connecting": ["bağlanıyor...", "connecting..."],

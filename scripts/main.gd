@@ -105,7 +105,7 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
 	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0,
-	"chat_cache": [], "chat_rev": 0, "conn_cache": []}
+	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0}
 
 # Çok oyunculu
 var net_mode := ""
@@ -2039,6 +2039,17 @@ func _start_server(args: PackedStringArray) -> void:
 		_spawn_bot(BOT_NAMES.pick_random())
 	slog("Sunucu başlatıldı (sürüm %d)" % NET_VERSION, Color(0.5, 1, 0.6))
 	for a in args:
+		if a.begins_with("--admin-tab="):
+			hud.admin_tab = a.trim_prefix("--admin-tab=")
+		if a == "--edit-test":
+			# Test: 8 sn sonra ilk kayıtlı oyuncuya +100 altın ve +1 seviye
+			get_tree().create_timer(8.0).timeout.connect(func() -> void:
+				var reg := _registry()
+				if not reg.is_empty():
+					_admin("adm_pl_cup_" + String(reg[0]["k"]))
+					_admin("adm_pl_lvup_" + String(reg[0]["k"])))
+		if a == "--reset-test":
+			get_tree().create_timer(7.0).timeout.connect(_admin.bind("adm_lbreset"))
 		if a.begins_with("--say="):
 			get_tree().create_timer(7.0).timeout.connect(server_admin_say.bind(0, a.trim_prefix("--say=").replace("_", " ")))
 	print("")
@@ -2096,7 +2107,7 @@ func _server_process(delta: float) -> void:
 	# Girişli yöneticilere panel verisi (saniyede 2 kez)
 	admin_timer -= delta
 	if admin_timer <= 0.0 and not admin_peers.is_empty():
-		admin_timer = 0.5
+		admin_timer = 1.0
 		var view := admin_data()
 		for ap in admin_peers.keys():
 			net.s_admin_state.rpc_id(ap, view)
@@ -2139,6 +2150,7 @@ func server_join(peer: int, info: Dictionary) -> void:
 	if f.level < int(GameData.ACCESSORIES[f.accessory]["level"]):
 		f.accessory = 0
 	_update_record(fname, info, f.level)
+	_deliver_pending.call_deferred(fname.to_lower())
 	var first_join := not peer_info.has(peer)
 	peers[peer] = f.net_id
 	peer_info[peer] = {"name": fname, "ip": net.peer_ip(peer), "info": info,
@@ -2214,12 +2226,78 @@ func _update_record(fname: String, info: Dictionary, level: int) -> void:
 	var key := fname.to_lower()
 	var r: Dictionary = records.get(key, {"n": fname, "l": 1})
 	r["n"] = fname
-	# sk/sc: tek oyunculu leş/altın, mk/mc: çok oyunculu leş/altın (en yüksek değer saklanır)
-	for stat in LB_STATS_MAX:
-		r[stat] = maxi(int(r.get(stat, 0)), clampi(int(info.get(stat, 0)), 0, 1000000))
-	r["l"] = maxi(int(r.get("l", 1)), level)
+	# Oyuncunun bilgisi: son görülme, cihaz, konum (yönetim panelindeki "tüm oyuncular" listesi)
+	r["seen"] = _now_str()
+	r["seen_u"] = int(Time.get_unix_time_from_system())
+	r["dev"] = String(info.get("dev", r.get("dev", "?"))).left(30)
+	if String(info.get("loc", "")) != "":
+		r["loc"] = String(info["loc"]).left(40)
+	# Oyuncu son sıfırlamadan önceki verisiyle geldiyse (henüz sıfırlanmadı) eski değerler yazılmaz
+	if int(info.get("re", 0)) >= lb_epoch:
+		# sk/sc: tek oyunculu leş/altın, mk/mc: çok oyunculu leş/altın; oyuncunun güncel değeri geçerli
+		for stat in LB_STATS_MAX:
+			r[stat] = clampi(int(info.get(stat, 0)), 0, 1000000)
+		r["l"] = level
+		r["c"] = clampi(int(info.get("coins", 0)), 0, 10000000)
 	records[key] = r
 	_save_records()
+
+
+## Yönetici bir oyuncunun hesabını düzenledi: oyuncu çevrimiçiyse hemen, değilse bir sonraki girişinde uygulanır.
+func _player_edit(key: String, action: String) -> void:
+	if not records.has(key):
+		return
+	var r: Dictionary = records[key]
+	var pend: Dictionary = r.get("pend", {})
+	var name := String(r["n"])
+	match action:
+		"lvup", "lvdn":
+			var lv := clampi(int(r.get("l", 1)) + (1 if action == "lvup" else -1), 1, GameData.MAX_LEVEL)
+			r["l"] = lv
+			pend["level"] = lv
+			slog("%s: seviye %d yapıldı" % [name, lv], Color(0.6, 0.85, 1))
+		"cup", "cdn":
+			var delta := 100 if action == "cup" else -100
+			r["c"] = maxi(0, int(r.get("c", 0)) + delta)
+			pend["coins"] = int(pend.get("coins", 0)) + delta
+			slog("%s: %+d altın" % [name, delta], Color(1, 0.85, 0.3))
+		"reset":
+			for stat in LB_STATS_MAX:
+				r[stat] = 0
+			r["l"] = 1
+			pend = {"reset": true}
+			slog("%s: hesabı sıfırlandı (seviye ve skorlar)" % name, Color(1, 0.5, 0.45))
+	r["pend"] = pend
+	records[key] = r
+	_deliver_pending(key)
+	_save_records()
+
+
+## Bekleyen düzenlemeyi, oyuncu şu an bağlıysa (menüde ya da arenada) gönderir.
+func _deliver_pending(key: String) -> void:
+	if not records.has(key) or (records[key].get("pend", {}) as Dictionary).is_empty():
+		return
+	for peer in sessions.keys():
+		if String(sessions[peer]["n"]).to_lower() == key and multiplayer.get_peers().has(peer):
+			net.s_admin_edit.rpc_id(peer, records[key]["pend"])
+			records[key].erase("pend")
+			return
+
+
+## Yönetim paneli: kaydı olan tüm oyuncular (en son görülen üstte).
+func _registry() -> Array:
+	var online := {}
+	for peer in sessions.keys():
+		online[String(sessions[peer]["n"]).to_lower()] = true
+	var all: Array = records.keys()
+	all.sort_custom(func(a: String, b: String) -> bool: return int(records[a].get("seen_u", 0)) > int(records[b].get("seen_u", 0)))
+	var out := []
+	for key in all.slice(0, 150):
+		var r: Dictionary = records[key]
+		out.append({"k": String(key).to_utf8_buffer().hex_encode(), "n": r.get("n", key), "l": int(r.get("l", 1)),
+			"c": int(r.get("c", 0)), "kills": int(r.get("sk", 0)) + int(r.get("mk", 0)), "seen": r.get("seen", "-"),
+			"dev": r.get("dev", ""), "on": online.has(key), "pend": not (r.get("pend", {}) as Dictionary).is_empty()})
+	return out
 
 
 ## Ücretsiz sunucu uyuyup yeniden açılınca diski sıfırlanır. Oyuncuların elindeki son liste ile
@@ -2521,6 +2599,7 @@ func server_top_request(peer: int, info: Dictionary, seed: Dictionary) -> void:
 	var fname := String(info.get("name", "")).strip_edges().left(14)
 	if fname != "":
 		_update_record(fname, info, clampi(int(info.get("level", 1)), 1, GameData.MAX_LEVEL))
+		_deliver_pending(fname.to_lower())
 
 
 func top_lists() -> Dictionary:
@@ -2615,8 +2694,14 @@ func _admin(id: String) -> void:
 			slog("Arenada zaten bir Dev var", Color(1, 0.75, 0.4))
 		else:
 			_spawn_boss()
+	elif id.begins_with("adm_pl_"):
+		# adm_pl_<işlem>_<isim (hex)>
+		var parts := id.split("_")
+		if parts.size() >= 4:
+			_player_edit(parts[3].hex_decode().get_string_from_utf8(), parts[2])
 	elif id == "adm_lbreset":
-		# Yeni dönem: oyuncuların elindeki eski listeler artık geri yüklenmez
+		# Yeni dönem: skor tablosu ve herkesin seviyesi sıfırlanır. Oyuncular bir sonraki girişlerinde
+		# bu dönemi görüp kendi seviye/skorlarını sıfırlar; eski listeler de artık geri yüklenmez.
 		records.clear()
 		lb_epoch = maxi(lb_epoch + 1, int(Time.get_unix_time_from_system()))
 		_save_records()
@@ -2781,7 +2866,7 @@ func _join_info() -> Dictionary:
 		"dev": device_name(), "loc": my_location,
 		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"]),
 		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"]),
-		"sc": int(save["sp_coins"]), "mc": int(save["mp_coins"])}
+		"sc": int(save["sp_coins"]), "mc": int(save["mp_coins"]), "re": int(save["reset_epoch"])}
 
 
 ## Lobi bağlantısı: ana menü açıkken sunucuya açık kalan hafif bağlantı (oyuna girilmez).
@@ -2861,6 +2946,16 @@ func _lobby_tick() -> void:
 
 
 func client_top(data: Dictionary) -> void:
+	# Yönetici skorları sıfırladı (yeni dönem): seviye ve skorlar sıfırlanır, satın alınanlar kalır
+	var e := int(data.get("e", 0))
+	if e > int(save["reset_epoch"]):
+		if e > 0 and (int(save["level"]) > 1 or int(save["total_kills"]) > 0):
+			_reset_progress()
+			hud.flash_banner(Loc.t("season_reset"), Color(1, 0.85, 0.3), 6.0)
+		save["reset_epoch"] = e
+		_write_save()
+		if lobby_online:
+			net.c_top.rpc_id(1, _top_info(), {}) # sıfırlanmış değerlerle tabloya yeniden yaz
 	if lb_fetching and net_mode == "":
 		lobby_online = true
 		lobby_state = "ready"
@@ -2976,6 +3071,33 @@ func client_welcome(data: Dictionary) -> void:
 
 
 ## Sunucu yöneticisinden gelen hediye (altın / seviye) kendi kaydımıza yazılır.
+## Seviye, XP ve skor istatistiklerini sıfırlar (satın alınan karakterler/bıçaklar ve altın kalır).
+func _reset_progress() -> void:
+	for k in ["total_kills", "wins", "games", "sp_kills", "sp_wins", "mp_kills", "mp_best", "sp_coins", "mp_coins", "xp"]:
+		save[k] = 0
+	save["best_rank"] = 0
+	save["level"] = 1
+
+
+## Yöneticinin hesap düzenlemesi (seviye / altın / sıfırlama).
+func client_admin_edit(d: Dictionary) -> void:
+	if d.get("reset", false):
+		_reset_progress()
+		hud.flash_banner(Loc.t("admin_reset_you"), Color(1, 0.6, 0.4), 5.0)
+	if d.has("level"):
+		save["level"] = clampi(int(d["level"]), 1, GameData.MAX_LEVEL)
+		save["xp"] = 0
+		hud.flash_banner(Loc.t("gift_level") % int(save["level"]), Color(0.6, 0.85, 1), 4.0)
+	if int(d.get("coins", 0)) != 0:
+		save["coins"] = maxi(0, int(save["coins"]) + int(d["coins"]))
+		if int(d["coins"]) > 0:
+			hud.flash_banner(Loc.t("gift_coins") % int(d["coins"]), Color(1, 0.85, 0.3), 4.0)
+	_write_save()
+	sfx.play("unlock", 0.0, 0.0)
+	if player != null and is_instance_valid(player):
+		player.level = int(save["level"])
+
+
 func client_grant(coins: int, levels: int) -> void:
 	if coins > 0:
 		save["coins"] = int(save["coins"]) + coins
@@ -3245,7 +3367,8 @@ func _update_camera(delta: float) -> void:
 		if target != null:
 			camera.position = target.position + target.move_dir * 70.0
 			# Yakın kamera: karakterler telefonda büyük görünsün; halka büyüdükçe biraz uzaklaşır
-			z = clampf(1.1 - (target.ring_radius() - 60.0) * 0.005, 0.68, 1.1)
+			# Yakın kamera; halka büyüdükçe biraz geri çekilir (çevreyi görebilmek için)
+			z = clampf(1.32 - (target.ring_radius() - 60.0) * 0.0045, 0.85, 1.32)
 	camera.zoom = camera.zoom.lerp(Vector2(z, z), minf(1.0, 2.0 * delta))
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
 	shake = lerpf(shake, 0.0, minf(1.0, 9.0 * delta))
@@ -3757,7 +3880,7 @@ func admin_data() -> Dictionary:
 		"zone": zone_on, "zone_r": int(zone_radius),
 		"chat": chat_log.slice(maxi(0, chat_log.size() - 14)), "chat_locked": chat_locked, "muted": muted.values(),
 		"lb_count": records.size(), "menu_count": chat_peers.size(), "cloud": cloud != null and cloud.enabled,
-		"conn": conn_log.slice(maxi(0, conn_log.size() - 80)),
+		"conn": conn_log.slice(maxi(0, conn_log.size() - 80)), "reg": _registry(),
 	}
 
 

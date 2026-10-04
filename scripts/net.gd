@@ -194,6 +194,12 @@ func s_chat(msgs: Array, reset: bool) -> void:
 	main.client_chat(msgs, reset)
 
 
+## Yöneticinin bu oyuncunun hesabında yaptığı değişiklik (seviye / altın / sıfırlama).
+@rpc("authority", "reliable")
+func s_admin_edit(d: Dictionary) -> void:
+	main.client_admin_edit(d)
+
+
 func peer_ip(id: int) -> String:
 	if peer == null or not multiplayer.get_peers().has(id):
 		return "?"

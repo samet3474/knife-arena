@@ -34,6 +34,8 @@ var name_edit: LineEdit
 var admin_edit: LineEdit
 var chat_edit: LineEdit
 var say_edit: LineEdit # yönetim paneli: duyuru metni
+var admin_tab := "arena" # yönetim paneli orta sütun: arena | reg | conn
+var admin_page := 0
 var _style_cache := {}
 var _fit_cache := {}
 static var perf_draw_us := 0
@@ -381,6 +383,13 @@ func _on_button(id: String) -> void:
 			pass
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
+		"atab_arena", "atab_reg", "atab_conn":
+			admin_tab = id.trim_prefix("atab_")
+			admin_page = 0
+		"apage_prev":
+			admin_page = maxi(0, admin_page - 1)
+		"apage_next":
+			admin_page += 1
 		"adm_say":
 			main.admin_say(say_edit.text)
 			say_edit.text = ""
@@ -764,10 +773,24 @@ func _draw_server(s: Vector2) -> void:
 		var txt: String = e["text"]
 		_text(Vector2(lg.position.x + 74, y), txt, _fit_size(txt, 13, lw - 86.0), e["col"])
 
-	# --- Orta: oyuncular (üst) ve giriş/çıkış kayıtları (alt) ---
-	var ph := clampf(76.0 + maxi(players.size(), 1) * 54.0, 170.0, (s.y - top - gap) * 0.5)
-	_draw_server_players(Rect2(mx, top, mw, ph), players)
-	_draw_conn_log(Rect2(mx, top + ph + gap, mw, s.y - top - ph - gap * 2), d.get("conn", []))
+	# --- Orta: sekmeler (arenadakiler / tüm oyuncular / giriş-çıkış kayıtları) ---
+	var reg: Array = d.get("reg", [])
+	var tabs := [["arena", "ARENA (%d)" % players.size()], ["reg", "TÜM OYUNCULAR (%d)" % reg.size()], ["conn", "GİRİŞ KAYITLARI"]]
+	var tw := (mw - 8.0 * 2) / 3.0
+	for i in tabs.size():
+		var tr := Rect2(mx + i * (tw + 8.0), top, tw, 38)
+		var on: bool = admin_tab == tabs[i][0]
+		_panel(tr, Color(GOLD, 0.2) if on else Color(1, 1, 1, 0.05), GOLD if on else Color(1, 1, 1, 0.1), 10, 2 if on else 1)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 25), tabs[i][1], 14, GOLD if on else Color(1, 1, 1, 0.6), tr.size.x)
+		buttons.append({"rect": tr, "id": "atab_" + tabs[i][0], "enabled": true})
+	var body := Rect2(mx, top + 46, mw, s.y - top - 46 - gap)
+	match admin_tab:
+		"reg":
+			_draw_registry(body, reg)
+		"conn":
+			_draw_conn_log(body, d.get("conn", []))
+		_:
+			_draw_server_players(body, players)
 
 	# --- Sağ: duyuru ve sohbet yönetimi ---
 	var an := Rect2(rx, top, rw, 112)
@@ -814,6 +837,52 @@ func _draw_server_players(r: Rect2, players: Array) -> void:
 		for a in acts:
 			_button(Rect2(bx, row.position.y + 6, 48, 34), "adm_%s_%d" % [a[0], peer], a[1], a[2], true, 12)
 			bx += 52.0
+
+
+## Yönetim paneli: şimdiye kadar giren tüm oyuncular; seviye / altın düzenleme ve hesap sıfırlama.
+## Değişiklik oyuncu çevrimiçiyse hemen, değilse bir sonraki girişinde uygulanır ("bekliyor").
+func _draw_registry(r: Rect2, reg: Array) -> void:
+	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(r.position.x + 14, r.position.y + 24), "KAYITLI OYUNCULAR", 15, GOLD)
+	_text(Vector2(r.position.x, r.position.y + 24), "yeşil nokta: şu an bağlı", 11, Color(1, 1, 1, 0.45),
+		HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14.0)
+	if reg.is_empty():
+		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0), "Henüz kayıtlı oyuncu yok", 15, Color(1, 1, 1, 0.45),
+			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		return
+	var row_h := 48.0
+	var per_page := maxi(1, int((r.size.y - 80.0) / row_h))
+	var pages := ceili(reg.size() / float(per_page))
+	admin_page = clampi(admin_page, 0, pages - 1)
+	var acts := [["lvdn", "Sv-", Color(0.3, 0.36, 0.5)], ["lvup", "Sv+", Color(0.3, 0.45, 0.85)],
+		["cdn", "-100", Color(0.5, 0.4, 0.2)], ["cup", "+100", Color(0.75, 0.55, 0.12)], ["reset", "Sıfırla", Color(0.7, 0.25, 0.22)]]
+	var bw := 44.0
+	for i in per_page:
+		var idx := admin_page * per_page + i
+		if idx >= reg.size():
+			break
+		var p: Dictionary = reg[idx]
+		var row := Rect2(r.position.x + 8, r.position.y + 36 + i * row_h, r.size.x - 16, row_h - 6)
+		_panel(row, Color(1, 1, 1, 0.04) if i % 2 == 0 else Color(1, 1, 1, 0.02), Color(0, 0, 0, 0), 10)
+		var mid := row.position.y + row.size.y / 2.0
+		GameData.disc(cv, Vector2(row.position.x + 12, mid - 6), 5.0, Color(0.4, 1, 0.5) if p.get("on", false) else Color(1, 1, 1, 0.2))
+		var info_w := row.size.x - acts.size() * (bw + 4) - 30.0
+		var line1 := "%s  •  Sv %d  •  %d altın  •  %d leş" % [String(p.get("n", "?")), int(p.get("l", 1)), int(p.get("c", 0)), int(p.get("kills", 0))]
+		_text(Vector2(row.position.x + 24, mid - 2), line1, _fit_size(line1, 14, info_w), Color.WHITE)
+		var line2 := "Son: %s  •  %s" % [String(p.get("seen", "-")), String(p.get("dev", ""))]
+		if p.get("pend", false):
+			line2 += "  •  değişiklik bekliyor"
+		_text(Vector2(row.position.x + 24, mid + 14), line2, _fit_size(line2, 11, info_w), Color(0.6, 0.85, 1, 0.8))
+		var bx := row.end.x - acts.size() * (bw + 4)
+		for a in acts:
+			_button(Rect2(bx, row.position.y + 5, bw, 32), "adm_pl_%s_%s" % [a[0], p["k"]], a[1], a[2], true, 11)
+			bx += bw + 4
+	if pages > 1:
+		var py := r.end.y - 38.0
+		var cx := r.position.x + r.size.x / 2.0
+		_button(Rect2(cx - 110, py, 60, 30), "apage_prev", "<", Color(0.25, 0.3, 0.42), admin_page > 0, 16)
+		_text(Vector2(cx - 50, py + 21), "%d / %d" % [admin_page + 1, pages], 14, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 100.0)
+		_button(Rect2(cx + 50, py, 60, 30), "apage_next", ">", Color(0.25, 0.3, 0.42), admin_page < pages - 1, 16)
 
 
 ## Yönetim paneli: giriş / çıkış kayıtları (sunucu yeniden başlasa da saklanır).
