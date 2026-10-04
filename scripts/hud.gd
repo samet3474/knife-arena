@@ -22,6 +22,9 @@ var buttons: Array[Dictionary] = []
 var font: Font
 var page := -1
 var tab := "characters" # characters | knives | levels
+var popup := "" # "" | shop | settings (menüde açılır pencere)
+var shop_preview := "" # koleksiyonda önizlenen kartın id'si
+var scoreboard_open := false
 var banner_text := ""
 var banner_time := 0.0
 var banner_color := Color(1, 0.4, 0.35)
@@ -134,12 +137,16 @@ func _on_name_focus_exited() -> void:
 func _process(delta: float) -> void:
 	banner_time = maxf(0.0, banner_time - delta)
 	var in_menu: bool = main.state == "menu"
+	if not in_menu:
+		popup = ""
 	name_edit.visible = in_menu
 	if in_menu:
 		name_edit.placeholder_text = Loc.t("name_placeholder")
 		var left_w := _left_w()
-		name_edit.position = Vector2(left_w / 2.0 - 150.0, 120.0)
+		var mc := _menu_center(_screen())
+		name_edit.position = Vector2(mc.x - 150.0, mc.y + 178.0)
 		name_edit.size = Vector2(300.0, 42.0)
+		name_edit.visible = popup == ""
 	elif name_edit.has_focus():
 		name_edit.release_focus()
 	var login: bool = main.state == "admin_login"
@@ -244,8 +251,26 @@ func _on_button(id: String) -> void:
 		"admin_go":
 			main.admin_connect(admin_edit.text.strip_edges())
 			admin_edit.text = ""
-		"tab_characters", "tab_knives", "tab_levels":
-			tab = id.trim_prefix("tab_")
+		"shop_characters", "shop_knives", "shop_levels":
+			open_shop(id.trim_prefix("shop_"))
+			main.sfx.play("select", 0.0, 0.0)
+		"shop_close", "shop_outside", "settings_close":
+			popup = ""
+			main.sfx.play("click", -4.0, 0.0)
+		"settings":
+			popup = "settings"
+			main.sfx.play("click", 0.0, 0.0)
+		"shop_use":
+			main.equip_or_buy(shop_preview)
+		"noop":
+			pass
+		"scoreboard":
+			scoreboard_open = not scoreboard_open
+		"admin_open":
+			popup = ""
+			main.on_button(id)
+		_ when id.begins_with("pick_"):
+			shop_preview = id.trim_prefix("pick_")
 			main.sfx.play("select", 0.0, 0.0)
 		_:
 			main.on_button(id)
@@ -668,319 +693,317 @@ func _draw_connecting(s: Vector2) -> void:
 
 
 # --- Ana menü ----------------------------------------------------------------
+# Düzen: üstte logo, altın, seviye ve ayarlar; ortada seçili karakter vitrini, isim kutusu ve
+# iki büyük mod butonu (tek / çok oyunculu); solda koleksiyon butonları; sağda istatistikler.
+# Koleksiyon (karakter/bıçak/seviye) ve ayarlar açılır kapanır pencerelerde.
+
+func _menu_center(s: Vector2) -> Vector2:
+	return Vector2(s.x / 2.0, s.y * 0.43)
+
 
 func _draw_menu(s: Vector2) -> void:
 	var t := Time.get_ticks_msec() / 1000.0
-	var skin: Dictionary = main.selected_skin()
-	var sel_id: String = skin["id"]
-	var skin_col: Color = skin["color"]
-	var owned: bool = main.skin_unlocked(skin)
-
 	# Arka plan: arena hafifçe görünür, kenarlara doğru koyulaşır
 	cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0.03, 0.06, 0.05, 0.62))
 	for i in 8:
 		var w := 40.0 + i * 22.0
-		cv.draw_rect(Rect2(0, 0, w, s.y), Color(0, 0, 0, 0.04))
-		cv.draw_rect(Rect2(s.x - w, 0, w, s.y), Color(0, 0, 0, 0.04))
+		cv.draw_rect(Rect2(0, 0, w, s.y), Color(0, 0, 0, 0.05))
+		cv.draw_rect(Rect2(s.x - w, 0, w, s.y), Color(0, 0, 0, 0.05))
+	_draw_menu_header(s)
+	_draw_showcase(s, t)
+	_draw_menu_side(s)
+	_draw_mode_buttons(s, t)
+	if popup != "":
+		buttons.clear() # alttaki menü butonları pencere açıkken basılamasın
+		if popup == "shop":
+			_draw_shop(s, t)
+		else:
+			_draw_settings(s)
 
-	_draw_menu_left(s, t, skin, sel_id, skin_col, owned)
-	_draw_menu_top_bar(s)
-	_draw_menu_panel(s, t, sel_id)
 
-
-func _draw_menu_left(s: Vector2, t: float, skin: Dictionary, sel_id: String, skin_col: Color, owned: bool) -> void:
-	var lw := _left_w()
-	_text(Vector2(0, 70), "KNIFE ARENA", 52, GOLD, HORIZONTAL_ALIGNMENT_CENTER, lw)
-	_text(Vector2(0, 100), Loc.t("tagline"), 15, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_CENTER, lw)
-	# (İsim kutusu y=120..162 arasında, LineEdit olarak çizilir)
-
-	# Seviye ve XP çubuğu
+func _draw_menu_header(s: Vector2) -> void:
+	_text(Vector2(28, 62), "KNIFE ARENA", 44, GOLD)
+	_text(Vector2(30, 88), Loc.t("tagline"), 14, Color(1, 1, 1, 0.65))
+	# Sağ üst: ayarlar, seviye, altın (sağdan sola)
+	var x := s.x - 24.0 - 52.0
+	var gear := Rect2(x, 22, 52, 52)
+	_button(gear, "settings", "", Color(0.25, 0.3, 0.42), true, 16)
+	var gc := gear.get_center() + Vector2(0, 1)
+	for k in 8:
+		GameData.disc(cv, gc + Vector2.from_angle(TAU * k / 8.0) * 13.0, 4.5, Color.WHITE)
+	GameData.disc(cv, gc, 12.0, Color.WHITE)
+	GameData.disc(cv, gc, 5.5, Color(0.25, 0.3, 0.42))
+	x -= 12.0
 	var lvl := int(main.save["level"])
 	var need := GameData.xp_needed(lvl)
-	var xp := int(main.save["xp"])
-	var row_x := lw / 2.0 - 150.0
-	_level_badge(Vector2(row_x + 18, 192), 18.0, lvl)
-	var bar := Rect2(row_x + 44, 184, 256, 16)
-	if lvl >= GameData.MAX_LEVEL:
-		_progress_bar(bar, 1.0, Color(0.45, 0.75, 1))
-	else:
-		_progress_bar(bar, float(xp) / need, Color(0.45, 0.75, 1))
-		_text(Vector2(bar.position.x, bar.end.y - 2), "%d / %d XP" % [xp, need], 12, Color.WHITE,
-			HORIZONTAL_ALIGNMENT_CENTER, bar.size.x)
-
-	# Vitrin: seçili karakter, kaide ve etrafında dönen seçili bıçaklar
-	var c := Vector2(lw * 0.5, s.y * 0.56)
-	for i in 5:
-		GameData.disc(cv, c + Vector2(0, 20), 230.0 - i * 24.0, Color(0.02, 0.04, 0.04, 0.12))
-	for i in 6:
-		GameData.disc(cv, c + Vector2(0, 10), 150.0 - i * 18.0, Color(skin_col, 0.045))
-	cv.draw_set_transform(c + Vector2(0, 92), 0.0, Vector2(1.0, 0.3))
-	GameData.disc(cv, Vector2.ZERO, 122.0, Color(0, 0, 0, 0.4))
-	GameData.disc(cv, Vector2.ZERO, 105.0, skin_col.darkened(0.6))
-	cv.draw_arc(Vector2.ZERO, 105.0, 0.0, TAU, 64, skin_col, 7.0)
-	cv.draw_arc(Vector2.ZERO, 90.0, 0.0, TAU, 64, Color(skin_col, 0.35), 3.0)
-	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	var kind: int = main.preview_knife()
-	var knife_center := c + Vector2(0, 26)
-	var knife_pos: Array[Vector2] = []
-	var knife_rot: Array[float] = []
-	for i in 8:
-		var a := t * 1.4 + TAU * i / 8.0
-		knife_pos.append(knife_center + Vector2(cos(a) * 155.0, sin(a) * 48.0))
-		knife_rot.append(Vector2(cos(a), sin(a) * 0.3).angle() + PI / 2.0)
-	for i in 8:
-		if knife_pos[i].y < knife_center.y:
-			KnifeArt.draw(cv, knife_pos[i], knife_rot[i], 1.05, kind)
-	_draw_skin(sel_id, c + Vector2(0, -10), 210.0, Color.WHITE, 1 + int(t * 10.0) % 8)
-	for i in 8:
-		if knife_pos[i].y >= knife_center.y:
-			KnifeArt.draw(cv, knife_pos[i], knife_rot[i], 1.05, kind)
-
-	if not owned:
-		_price_tag(Vector2(lw / 2.0, c.y + 110), skin)
-	_text_fit(Vector2(0, c.y + 158), Loc.t(sel_id + ".name"), 34, Color.WHITE, lw)
-	_text_fit(Vector2(0, c.y + 184), Loc.t(sel_id + ".desc"), 16, skin_col.lightened(0.45), lw)
-	var kinfo: Dictionary = GameData.KNIVES[kind]
-	var kcol: Color = kinfo["color"]
-	_text_fit(Vector2(0, c.y + 207), Loc.t("knife_label") % Loc.t(kinfo["id"] + ".name"), 15, kcol.lightened(0.2), lw)
-
-	# İstatistik kutucukları (sığmazsa sonuncusu atlanır)
-	var best := int(main.save["best_rank"])
-	var x := 20.0
-	var chips := [[Loc.t("stat_kills"), str(main.save["total_kills"])], [Loc.t("stat_wins"), str(main.save["wins"])],
-		[Loc.t("stat_best"), "#%d" % best if best > 0 else "-"]]
-	for ch in chips:
-		var w := font.get_string_size(ch[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x \
-			+ font.get_string_size(ch[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x + 38.0
-		if x + w > lw - 140.0:
-			break
-		x += _chip(Vector2(x, s.y - 56), ch[0], ch[1]) + 8.0
-	# Yönetim paneline giriş (şifreli)
-	_button(Rect2(lw - 128, s.y - 58, 112, 44), "admin_open", Loc.t("admin"), Color(0.32, 0.26, 0.45), true, 15)
-
-
-## Sağ üst: altın bakiyesi ve ayar butonları (sağdan sola dizilir, çakışmaz).
-func _draw_menu_top_bar(s: Vector2) -> void:
-	var x := s.x - 24.0
-	var items := [
-		["sound", Loc.t("sound_on") if main.save["sound"] else Loc.t("sound_off"), Color(0.25, 0.3, 0.42)],
-		["lang", Loc.t("language"), Color(0.25, 0.3, 0.42)],
-		["aim", Loc.t("auto_aim_on") if main.save["auto_aim"] else Loc.t("auto_aim_off"),
-			Color(0.55, 0.22, 0.25) if main.save["auto_aim"] else Color(0.25, 0.3, 0.42)],
-	]
-	for it in items:
-		var w := clampf(font.get_string_size(it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 34.0, 120.0, 190.0)
-		x -= w
-		_button(Rect2(x, 24, w, 46), it[0], it[1], it[2], true, 16)
-		x -= 10.0
-	# Tam ekran butonu (köşe işaretli simge)
-	x -= 46.0
-	var fr := Rect2(x, 24, 46, 46)
-	_button(fr, "fullscreen", "", Color(0.25, 0.3, 0.42), true, 16)
-	var fc := fr.get_center()
-	for k in 4:
-		var sx := -1.0 if k % 2 == 0 else 1.0
-		var sy := -1.0 if k < 2 else 1.0
-		var corner := fc + Vector2(sx * 11, sy * 11)
-		cv.draw_polyline(PackedVector2Array([corner - Vector2(sx * 7, 0), corner, corner - Vector2(0, sy * 7)]), Color.WHITE, 3.0)
-	x -= 10.0
+	var lw := 210.0
+	x -= lw
+	_panel(Rect2(x, 22, lw, 52), PANEL_BG, Color(0.45, 0.75, 1, 0.6), 26, 2)
+	_level_badge(Vector2(x + 26, 48), 18.0, lvl)
+	var bar := Rect2(x + 52, 41, lw - 66, 14)
+	_progress_bar(bar, 1.0 if lvl >= GameData.MAX_LEVEL else float(main.save["xp"]) / need, Color(0.45, 0.75, 1))
+	_text(Vector2(bar.position.x, bar.end.y - 2), "%d / %d XP" % [int(main.save["xp"]), need], 11, Color.WHITE,
+		HORIZONTAL_ALIGNMENT_CENTER, bar.size.x)
+	x -= 12.0
 	var coins := int(main.save["coins"])
-	var cw := _coin_width(coins, 22) + 32.0
+	var cw := _coin_width(coins, 24) + 34.0
 	x -= cw
-	_panel(Rect2(x, 24, cw, 46), PANEL_BG, GOLD, 23, 2)
-	_coin_amount(Vector2(x + 16, 55), coins, 22)
+	_panel(Rect2(x, 22, cw, 52), PANEL_BG, GOLD, 26, 2)
+	_coin_amount(Vector2(x + 17, 57), coins, 24)
 
 
-func _draw_menu_panel(s: Vector2, t: float, sel_id: String) -> void:
-	var px := s.x * 0.5
-	var pw := s.x * 0.5 - 24.0
-	var py := 90.0
-	var ph := s.y - 108.0
-	_panel(Rect2(px, py, pw, ph), Color(0.05, 0.08, 0.11, 0.88), Color(1, 1, 1, 0.08), 22, 2, 14)
+## Seçili karakter: kaide, parlama ve etrafında dönen seçili bıçaklar.
+func _draw_showcase(s: Vector2, t: float) -> void:
+	var skin: Dictionary = main.playable_skin()
+	var sel_id: String = skin["id"]
+	var skin_col: Color = skin["color"]
+	var c := _menu_center(s)
+	for i in 5:
+		GameData.disc(cv, c + Vector2(0, 20), 220.0 - i * 24.0, Color(0.02, 0.04, 0.04, 0.12))
+	for i in 6:
+		GameData.disc(cv, c + Vector2(0, 10), 145.0 - i * 18.0, Color(skin_col, 0.05))
+	cv.draw_set_transform(c + Vector2(0, 88), 0.0, Vector2(1.0, 0.3))
+	GameData.disc(cv, Vector2.ZERO, 118.0, Color(0, 0, 0, 0.4))
+	GameData.disc(cv, Vector2.ZERO, 102.0, skin_col)
+	GameData.disc(cv, Vector2.ZERO, 95.0, skin_col.darkened(0.6))
+	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var kind: int = main.selected_knife()
+	var kc := c + Vector2(0, 24)
+	var pos: Array[Vector2] = []
+	var rot: Array[float] = []
+	for i in 8:
+		var a := t * 1.5 + TAU * i / 8.0
+		pos.append(kc + Vector2(cos(a) * 150.0, sin(a) * 46.0))
+		rot.append(Vector2(cos(a), sin(a) * 0.3).angle() + PI / 2.0)
+	for i in 8:
+		if pos[i].y < kc.y:
+			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
+	_draw_skin(sel_id, c + Vector2(0, -12), 200.0, Color.WHITE, 1 + int(t * 10.0) % 8)
+	for i in 8:
+		if pos[i].y >= kc.y:
+			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
+	_text_fit(Vector2(c.x - 250, c.y + 140), Loc.t(sel_id + ".name"), 30, Color.WHITE, 500.0)
+	var kinfo: Dictionary = GameData.KNIVES[kind]
+	_text_fit(Vector2(c.x - 250, c.y + 164), Loc.t("knife_label") % Loc.t(kinfo["id"] + ".name"), 15,
+		(kinfo["color"] as Color).lightened(0.25), 500.0)
+	# (İsim kutusu bunun altında LineEdit olarak çizilir: bkz. _process)
 
-	# Sekmeler: Karakterler | Bıçaklar | Seviye
+
+## Sol: koleksiyon butonları. Sağ: istatistikler.
+func _draw_menu_side(s: Vector2) -> void:
+	var owned_skins := 0
+	for sk in GameData.available_skins():
+		if main.skin_unlocked(sk):
+			owned_skins += 1
+	var owned_knives := 0
+	for kn in GameData.KNIVES:
+		if main.skin_unlocked(kn):
+			owned_knives += 1
+	var items := [
+		["shop_characters", Loc.t("tab_characters"), "%d / %d" % [owned_skins, GameData.available_skins().size()], Color(0.55, 0.3, 0.25)],
+		["shop_knives", Loc.t("tab_knives"), "%d / %d" % [owned_knives, GameData.KNIVES.size()], Color(0.3, 0.42, 0.6)],
+		["shop_levels", Loc.t("tab_levels"), Loc.t("level_short") % int(main.save["level"]), Color(0.32, 0.3, 0.55)],
+	]
+	var y := 120.0
+	for it in items:
+		var r := Rect2(24, y, 230, 64)
+		_button(r, it[0], "", it[3], true, 16)
+		_text(Vector2(r.position.x + 18, r.position.y + 30), it[1], _fit_size(it[1], 19, 150.0), Color.WHITE)
+		_text(Vector2(r.position.x + 18, r.position.y + 52), it[2], 13, Color(1, 1, 1, 0.7))
+		_text(Vector2(r.end.x - 34, r.position.y + 42), ">", 24, Color(1, 1, 1, 0.8))
+		y += 78.0
+	# Sağ: istatistik kutucukları (dikey)
+	var best := int(main.save["best_rank"])
+	var stats := [[Loc.t("stat_kills"), str(main.save["total_kills"])], [Loc.t("stat_wins"), str(main.save["wins"])],
+		[Loc.t("stat_best"), "#%d" % best if best > 0 else "-"]]
+	y = 120.0
+	for st in stats:
+		var r := Rect2(s.x - 24 - 200, y, 200, 52)
+		_panel(r, PANEL_BG, Color(1, 1, 1, 0.1), 16, 1)
+		_text(Vector2(r.position.x + 16, r.position.y + 32), st[0], 14, Color(1, 1, 1, 0.65))
+		_text(Vector2(r.position.x, r.position.y + 34), st[1], 22, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 16)
+		y += 62.0
+
+
+## Alt orta: iki büyük mod butonu (başlık + açıklama).
+func _draw_mode_buttons(s: Vector2, t: float) -> void:
+	var w := minf(330.0, (s.x - 80.0) / 2.0)
+	var h := 92.0
+	var y := s.y - h - 22.0
+	var glow := 0.5 + 0.5 * sin(t * 4.0)
+	var modes := [
+		["play", Loc.t("mode_single"), Loc.t("mode_single_sub"), Color(0.22, 0.66, 0.33), Rect2(s.x / 2.0 - w - 10.0, y, w, h)],
+		["mp", Loc.t("mode_multi"), Loc.t("mode_multi_sub"), Color(0.28, 0.42, 0.88), Rect2(s.x / 2.0 + 10.0, y, w, h)],
+	]
+	for m in modes:
+		var r: Rect2 = m[4]
+		var col: Color = m[3]
+		_panel(r.grow(3.0 + glow * 4.0), Color(col, 0.12 + glow * 0.12), Color(0, 0, 0, 0), 20)
+		_button(r, m[0], "", col, true, 16)
+		_text(Vector2(r.position.x, r.position.y + 46), m[1], _fit_size(m[1], 30, r.size.x - 24.0), Color.WHITE,
+			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		_text(Vector2(r.position.x, r.position.y + 72), m[2], _fit_size(m[2], 14, r.size.x - 24.0), Color(1, 1, 1, 0.8),
+			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+
+
+# --- Koleksiyon penceresi (karakterler / bıçaklar / seviyeler) -------------------
+
+func _shop_items() -> Array:
+	return GameData.available_skins() if tab == "characters" else GameData.KNIVES
+
+
+func _shop_item(id: String) -> Dictionary:
+	for it in GameData.SKINS + GameData.KNIVES:
+		if it["id"] == id:
+			return it
+	return {}
+
+
+func _equipped_id() -> String:
+	return String(main.playable_skin()["id"]) if tab == "characters" else String(GameData.KNIVES[main.selected_knife()]["id"])
+
+
+func open_shop(which: String) -> void:
+	popup = "shop"
+	tab = which
+	page = -1
+	shop_preview = _equipped_id() if which != "levels" else ""
+
+
+func _draw_shop(s: Vector2, t: float) -> void:
+	cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.6))
+	var w := minf(s.x - 60.0, 1180.0)
+	var r := Rect2((s.x - w) / 2.0, 26, w, s.y - 52)
+	_panel(r, Color(0.05, 0.08, 0.11, 0.97), Color(1, 1, 1, 0.12), 22, 2, 16)
+	# Sekmeler ve kapatma
 	var tabs := ["characters", "knives", "levels"]
-	var tab_w := (pw - 44.0 - 16.0) / 3.0
+	var tab_w := 200.0
 	for k in tabs.size():
 		var id: String = tabs[k]
 		var active := tab == id
-		var r := Rect2(px + 22.0 + k * (tab_w + 8.0), py + 14.0, tab_w, 42.0)
-		_panel(r, Color(GOLD, 0.2) if active else Color(1, 1, 1, 0.05), GOLD if active else Color(1, 1, 1, 0.1), 12, 2 if active else 1)
-		_text_fit(Vector2(r.position.x, r.position.y + 28), Loc.t("tab_" + id), 18, GOLD if active else Color(1, 1, 1, 0.6), r.size.x)
-		buttons.append({"rect": r, "id": "tab_" + id, "enabled": true})
+		var tr := Rect2(r.position.x + 22.0 + k * (tab_w + 8.0), r.position.y + 16.0, tab_w, 44.0)
+		_panel(tr, Color(GOLD, 0.2) if active else Color(1, 1, 1, 0.05), GOLD if active else Color(1, 1, 1, 0.1), 12, 2 if active else 1)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 29), Loc.t("tab_" + id), 18, GOLD if active else Color(1, 1, 1, 0.6), tr.size.x)
+		buttons.append({"rect": tr, "id": "shop_" + id, "enabled": true})
+	var coins := int(main.save["coins"])
+	var cw := _coin_width(coins, 20) + 30.0
+	_panel(Rect2(r.end.x - 90 - cw, r.position.y + 16, cw, 44), PANEL_BG, GOLD, 22, 2)
+	_coin_amount(Vector2(r.end.x - 90 - cw + 15, r.position.y + 46), coins, 20)
+	_button(Rect2(r.end.x - 70, r.position.y + 14, 50, 48), "shop_close", "X", Color(0.55, 0.25, 0.25), true, 22)
 
-	var content := Rect2(px + 22.0, py + 66.0, pw - 44.0, ph - 66.0 - 100.0)
-	match tab:
-		"knives":
-			_draw_knife_grid(content, t)
-		"levels":
-			_draw_level_table(content)
-		_:
-			_draw_skin_grid(content, t, sel_id)
-
-	# Oyna / Satın al butonu ve yanında çok oyunculu butonu
-	var full := Rect2(px + 22.0, py + ph - 92.0, pw - 44.0, 76.0)
-	var mp_w := clampf(full.size.x * 0.36, 170.0, 230.0)
-	var play_rect := Rect2(full.position, Vector2(full.size.x - mp_w - 12.0, full.size.y))
-	_button(Rect2(full.end.x - mp_w, full.position.y, mp_w, full.size.y), "mp", Loc.t("multiplayer"),
-		Color(0.3, 0.42, 0.85), true, 22)
-	var pending: Dictionary = main.pending_purchase()
-	var glow := 0.5 + 0.5 * sin(t * 4.0)
-	if pending.is_empty():
-		_panel(play_rect.grow(4.0 + glow * 4.0), Color(0.3, 0.9, 0.4, 0.15 + glow * 0.15), Color(0, 0, 0, 0), 18)
-		_button(play_rect, "play", Loc.t("play"), Color(0.22, 0.68, 0.33), true, 36)
-		return
-	var price := int(pending["price"])
-	var lvl_ok: bool = main.level_ok(pending)
-	var can_buy: bool = lvl_ok and int(main.save["coins"]) >= price
-	if can_buy:
-		_panel(play_rect.grow(4.0 + glow * 4.0), Color(GOLD, 0.15 + glow * 0.15), Color(0, 0, 0, 0), 18)
-		var label := Loc.t("buy") + "  " + Loc.t(pending["id"] + ".name")
-		var cw := _coin_width(price, 24)
-		_button(Rect2(play_rect.position, Vector2(play_rect.size.x, play_rect.size.y)), "play", label + "      ",
-			Color(0.85, 0.6, 0.12), true, 26)
-		_coin_amount(Vector2(play_rect.end.x - cw - 26, play_rect.position.y + play_rect.size.y * 0.5 + 9), price, 24, Color.WHITE)
-	elif not lvl_ok:
-		_button(play_rect, "play", Loc.t("level_req") % int(pending["level"]), Color(0.3, 0.3, 0.36), true, 26)
+	var body := Rect2(r.position.x + 22, r.position.y + 76, r.size.x - 44, r.size.y - 96)
+	if tab == "levels":
+		_draw_level_table(body)
 	else:
-		_button(play_rect, "play", Loc.t("need_coins") % price, Color(0.3, 0.3, 0.36), true, 26)
+		var pane := Rect2(body.position, Vector2(300, body.size.y))
+		_draw_shop_preview(pane, t)
+		var grid := Rect2(body.position.x + 320, body.position.y, body.size.x - 320, body.size.y)
+		_draw_shop_grid(grid, t)
+	# Pencere dışına dokununca kapanır (en sona eklenir: pencere butonları önceliklidir)
+	buttons.append({"rect": Rect2(Vector2.ZERO, s), "id": "shop_outside", "enabled": true})
+
+
+## Sol bölme: seçili kartın büyük önizlemesi, açıklaması ve SEÇ / SATIN AL butonu.
+func _draw_shop_preview(r: Rect2, t: float) -> void:
+	_panel(r, Color(1, 1, 1, 0.03), Color(1, 1, 1, 0.08), 16, 1)
+	var item := _shop_item(shop_preview)
+	if item.is_empty():
+		return
+	var id: String = item["id"]
+	var col: Color = item["color"]
+	var c := r.position + Vector2(r.size.x / 2.0, r.size.y * 0.33)
+	for i in 4:
+		GameData.disc(cv, c, 110.0 - i * 20.0, Color(col, 0.06))
+	if tab == "characters":
+		cv.draw_set_transform(c + Vector2(0, 74), 0.0, Vector2(1.0, 0.3))
+		GameData.disc(cv, Vector2.ZERO, 80.0, Color(col, 0.5))
+		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_draw_skin(id, c, 170.0, Color.WHITE, 1 + int(t * 10.0) % 8)
+	else:
+		var k := GameData.knife_index(id)
+		var glow: Color = item["glow"]
+		if glow.a > 0.0:
+			cv.draw_texture_rect(GameData.glow_tex(), Rect2(c - Vector2(90, 90), Vector2(180, 180)), false, glow)
+		KnifeArt.draw(cv, c, PI / 4.0 + sin(t * 2.0) * 0.2, 3.2, k, false)
+	var ny := r.position.y + r.size.y * 0.33 + 128
+	_text_fit(Vector2(r.position.x, ny), Loc.t(id + ".name"), 26, Color.WHITE, r.size.x)
+	if tab == "characters":
+		_text_fit(Vector2(r.position.x, ny + 26), Loc.t(id + ".desc"), 14, col.lightened(0.4), r.size.x)
+	# Durum ve işlem butonu
+	var owned: bool = main.skin_unlocked(item)
+	var equipped := id == _equipped_id()
+	var br := Rect2(r.position.x + 16, r.end.y - 84, r.size.x - 32, 66)
+	if equipped:
+		_button(br, "noop", Loc.t("equipped"), Color(0.3, 0.34, 0.4), false, 22)
+	elif owned:
+		_button(br, "shop_use", Loc.t("equip"), Color(0.22, 0.66, 0.33), true, 26)
+	elif not main.level_ok(item):
+		_button(br, "noop", Loc.t("level_req") % int(item["level"]), Color(0.3, 0.3, 0.36), false, 18)
+	else:
+		var price := int(item["price"])
+		var afford := int(main.save["coins"]) >= price
+		_button(br, "shop_use" if afford else "noop", Loc.t("buy") + "        ", Color(0.85, 0.6, 0.12) if afford else Color(0.3, 0.3, 0.36),
+			afford, 24)
+		var pw := _coin_width(price, 24)
+		_coin_amount(Vector2(br.end.x - pw - 22, br.position.y + br.size.y / 2.0 + 9), price, 24, Color.WHITE if afford else Color(1, 0.6, 0.55))
 
 
 func _grid_rect(content: Rect2, k: int) -> Rect2:
 	var gap := 12.0
 	var cw := (content.size.x - gap * (CARD_COLS - 1)) / CARD_COLS
-	var ch := minf(180.0, (content.size.y - 34.0 - gap) / 2.0)
+	var ch := minf(190.0, (content.size.y - 40.0 - gap) / 2.0)
 	return Rect2(content.position.x + (k % CARD_COLS) * (cw + gap), content.position.y + (k / CARD_COLS) * (ch + gap), cw, ch)
 
 
-func _draw_skin_grid(content: Rect2, t: float, sel_id: String) -> void:
-	var skins := GameData.available_skins()
-	var sel_index := 0
-	var open_count := 0
-	for i in skins.size():
-		if skins[i]["id"] == sel_id:
-			sel_index = i
-		if main.skin_unlocked(skins[i]):
-			open_count += 1
-	var pages := ceili(skins.size() / float(CARDS_PER_PAGE))
+func _draw_shop_grid(content: Rect2, t: float) -> void:
+	var list := _shop_items()
+	var pages := ceili(list.size() / float(CARDS_PER_PAGE))
 	if page < 0:
-		page = sel_index / CARDS_PER_PAGE
+		page = 0
+		for i in list.size():
+			if list[i]["id"] == shop_preview:
+				page = i / CARDS_PER_PAGE
 	page = clampi(page, 0, pages - 1)
-	var last := Rect2()
+	var equipped := _equipped_id()
 	for k in CARDS_PER_PAGE:
 		var i := page * CARDS_PER_PAGE + k
-		if i >= skins.size():
+		if i >= list.size():
 			break
-		last = _grid_rect(content, k)
-		_skin_card(last, skins[i], skins[i]["id"] == sel_id, t)
-	# Sayfa satırı: < ● ● >   ve açık karakter sayısı
-	var row_y := _grid_rect(content, CARD_COLS).end.y + 6.0
-	var cx := content.position.x + content.size.x / 2.0
+		_shop_card(_grid_rect(content, k), list[i], list[i]["id"] == shop_preview, list[i]["id"] == equipped, t)
 	if pages > 1:
-		_button(Rect2(cx - 90, row_y, 40, 28), "page_prev", "<", Color(0.25, 0.3, 0.42), page > 0, 18)
-		_button(Rect2(cx + 50, row_y, 40, 28), "page_next", ">", Color(0.25, 0.3, 0.42), page < pages - 1, 18)
+		var row_y := _grid_rect(content, CARD_COLS).end.y + 8.0
+		var cx := content.position.x + content.size.x / 2.0
+		_button(Rect2(cx - 100, row_y, 48, 32), "page_prev", "<", Color(0.25, 0.3, 0.42), page > 0, 18)
+		_button(Rect2(cx + 52, row_y, 48, 32), "page_next", ">", Color(0.25, 0.3, 0.42), page < pages - 1, 18)
 		for i in pages:
-			GameData.disc(cv, Vector2(cx + (i - (pages - 1) / 2.0) * 18.0, row_y + 14.0), 5.0, GOLD if i == page else Color(1, 1, 1, 0.25))
-	_text(Vector2(content.position.x, row_y + 20), Loc.t("n_open") % [open_count, skins.size()], 14, Color(1, 1, 1, 0.5),
-		HORIZONTAL_ALIGNMENT_RIGHT, content.size.x)
+			GameData.disc(cv, Vector2(cx + (i - (pages - 1) / 2.0) * 18.0, row_y + 16.0), 5.0, GOLD if i == page else Color(1, 1, 1, 0.25))
 
 
-func _draw_knife_grid(content: Rect2, t: float) -> void:
-	var sel_knife: int = main.preview_knife()
-	for k in GameData.KNIVES.size():
-		_knife_card(_grid_rect(content, k), k, k == sel_knife, t)
-
-
-## Seviye tablosu: mevcut seviyenin çevresindeki seviyeler, ödülleri ve açtıkları.
-func _draw_level_table(content: Rect2) -> void:
-	var lvl := int(main.save["level"])
-	var rows := 7
-	var row_h := minf(52.0, (content.size.y - 8.0) / rows)
-	var first := clampi(lvl - 1, 1, maxi(1, GameData.MAX_LEVEL - rows + 1))
-	for i in rows:
-		var L := first + i
-		if L > GameData.MAX_LEVEL:
-			break
-		var r := Rect2(content.position.x, content.position.y + i * row_h, content.size.x, row_h - 6.0)
-		var is_cur := L == lvl
-		var done := L < lvl
-		_panel(r, Color(GOLD, 0.16) if is_cur else Color(1, 1, 1, 0.04), GOLD if is_cur else Color(1, 1, 1, 0.06), 12, 2 if is_cur else 1)
-		_level_badge(r.position + Vector2(26, r.size.y / 2.0), 16.0, L)
-		# Bu seviyede açılan karakter/bıçaklar
-		var unlocks := PackedStringArray()
-		for item in GameData.SKINS + GameData.KNIVES:
-			if int(item["level"]) == L and int(item["price"]) > 0:
-				unlocks.append(Loc.t(item["id"] + ".name"))
-		var mid := r.position.y + r.size.y / 2.0
-		var reward_w := _coin_width(GameData.level_reward(L), 18) + 20.0
-		var status_w := 90.0
-		var text_w := r.size.x - 56.0 - reward_w - status_w
-		if not unlocks.is_empty():
-			var txt := Loc.t("level_unlocks") % ", ".join(unlocks)
-			_text(Vector2(r.position.x + 52, mid + 6), txt, _fit_size(txt, 15, text_w), Color(1, 1, 1, 0.85))
-		if is_cur:
-			# Bulunulan seviye: ödül yerine bir sonraki seviyeye kalan XP
-			var need := GameData.xp_needed(lvl)
-			var xb := Rect2(r.end.x - status_w - reward_w - 40.0, mid - 8, reward_w + 30.0, 16)
-			_progress_bar(xb, float(main.save["xp"]) / need, Color(0.45, 0.75, 1))
-			_text(Vector2(xb.position.x, xb.end.y - 3), "%d/%d" % [int(main.save["xp"]), need], 11, Color.WHITE,
-				HORIZONTAL_ALIGNMENT_CENTER, xb.size.x)
-		else:
-			_coin_amount(Vector2(r.end.x - status_w - reward_w, mid + 7), GameData.level_reward(L), 18,
-				GOLD if not done else Color(1, 1, 1, 0.4))
-		var status := Loc.t("current") if is_cur else (Loc.t("done") if done else "")
-		if status != "":
-			_text(Vector2(r.end.x - status_w, mid + 6), status, 14, GOLD if is_cur else Color(0.5, 1, 0.6),
-				HORIZONTAL_ALIGNMENT_CENTER, status_w - 8.0)
-		elif L > lvl:
-			_draw_lock(Vector2(r.end.x - status_w / 2.0, mid), 0.6)
-
-
-func _knife_card(r: Rect2, k: int, selected: bool, t: float) -> void:
-	var info: Dictionary = GameData.KNIVES[k]
-	var id: String = info["id"]
-	var glow: Color = info["glow"]
-	var col: Color = info["color"]
-	var owned: bool = main.skin_unlocked(info)
-	_card_base(r, Color(0.16, 0.13, 0.08), selected)
-	var c := r.position + Vector2(r.size.x / 2.0, r.size.y * 0.4)
-	if glow.a > 0.0:
-		var pulse := 0.8 + 0.2 * sin(t * 4.0 + k)
-		cv.draw_texture_rect(GameData.glow_tex(), Rect2(c - Vector2(46, 46), Vector2(92, 92)), false,
-			Color(glow, glow.a * pulse * (1.0 if owned else 0.5)))
-	var rot := PI / 4.0 + (sin(t * 2.0) * 0.15 if selected else 0.0)
-	KnifeArt.draw(cv, c, rot, minf(2.0, r.size.y / 90.0), k, false)
-	if selected and info["fx"] != "":
-		for j in 3:
-			var ph := fmod(t * 0.8 + j / 3.0, 1.0)
-			var p := c + Vector2(cos(j * 2.1 + t) * 26.0, 20.0 - ph * 60.0)
-			GameData.disc(cv, p, 3.0 * (1.0 - ph), Color(col.lightened(0.3), 1.0 - ph))
-	_card_footer(r, info, owned, selected)
-	buttons.append({"rect": r, "id": id, "enabled": true})
-
-
-func _skin_card(r: Rect2, skin: Dictionary, selected: bool, t: float) -> void:
-	var id: String = skin["id"]
-	var col: Color = skin["color"]
-	var owned: bool = main.skin_unlocked(skin)
-	_card_base(r, col.darkened(0.62), selected)
-	var sc := r.position + Vector2(r.size.x / 2.0, r.size.y * 0.38)
-	cv.draw_set_transform(sc + Vector2(0, r.size.y * 0.22), 0.0, Vector2(1.0, 0.3))
-	GameData.disc(cv, Vector2.ZERO, 34.0, Color(0, 0, 0, 0.3) if not selected else Color(col, 0.45))
-	cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	var size := minf(r.size.x * 0.72, r.size.y * 0.58)
-	var frame := (1 + int(t * 10.0) % 8) if selected else 0
-	_draw_skin(id, sc, size, Color.WHITE if owned or selected else Color(0.6, 0.6, 0.65), frame)
-	_card_footer(r, skin, owned, selected)
-	buttons.append({"rect": r, "id": id, "enabled": true})
-
-
-func _card_base(r: Rect2, sel_bg: Color, selected: bool) -> void:
+func _shop_card(r: Rect2, item: Dictionary, selected: bool, equipped: bool, t: float) -> void:
+	var id: String = item["id"]
+	var col: Color = item["color"]
+	var owned: bool = main.skin_unlocked(item)
 	if selected:
-		_panel(r.grow(3.0), Color(GOLD, 0.25), Color(0, 0, 0, 0), 17)
-	_panel(r, sel_bg if selected else Color(0.11, 0.15, 0.2), GOLD if selected else Color(1, 1, 1, 0.07),
-		14, 3 if selected else 1)
+		_panel(r.grow(3.0), Color(GOLD, 0.3), Color(0, 0, 0, 0), 17)
+	_panel(r, col.darkened(0.65) if selected else Color(0.11, 0.15, 0.2), GOLD if selected else Color(1, 1, 1, 0.07), 14,
+		3 if selected else 1)
+	var c := r.position + Vector2(r.size.x / 2.0, r.size.y * 0.4)
+	if tab == "characters":
+		cv.draw_set_transform(c + Vector2(0, r.size.y * 0.22), 0.0, Vector2(1.0, 0.3))
+		GameData.disc(cv, Vector2.ZERO, 32.0, Color(0, 0, 0, 0.3) if not selected else Color(col, 0.45))
+		cv.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		_draw_skin(id, c, minf(r.size.x * 0.72, r.size.y * 0.58), Color.WHITE if owned or selected else Color(0.6, 0.6, 0.65),
+			(1 + int(t * 10.0) % 8) if selected else 0)
+	else:
+		var glow: Color = item["glow"]
+		if glow.a > 0.0:
+			cv.draw_texture_rect(GameData.glow_tex(), Rect2(c - Vector2(44, 44), Vector2(88, 88)), false, Color(glow, glow.a * (1.0 if owned else 0.5)))
+		KnifeArt.draw(cv, c, PI / 4.0, minf(2.0, r.size.y / 90.0), GameData.knife_index(id), false)
+	if equipped:
+		_panel(Rect2(r.position.x + 8, r.position.y + 8, 64, 22), Color(0.22, 0.66, 0.33), Color(0, 0, 0, 0), 11)
+		_text(Vector2(r.position.x + 8, r.position.y + 25), Loc.t("in_use"), 12, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 64.0)
+	_card_footer(r, item, owned, selected)
+	buttons.append({"rect": r, "id": "pick_" + id, "enabled": true})
 
 
 ## Kartın alt kısmı: sahipse isim; değilse isim + fiyat (ya da seviye şartı) ve kilit.
@@ -1003,20 +1026,71 @@ func _card_footer(r: Rect2, item: Dictionary, owned: bool, selected: bool) -> vo
 	_coin_amount(Vector2(bar.position.x + (bar.size.x - w) / 2.0, bar.end.y - 4), price, 14, GOLD if afford else Color(1, 0.5, 0.45))
 
 
-## Önizlenen (alınmamış) karakterin altındaki büyük fiyat etiketi.
-func _price_tag(center: Vector2, item: Dictionary) -> void:
-	var price := int(item["price"])
-	var lvl_ok: bool = main.level_ok(item)
-	var label := Loc.t("level_short") % int(item["level"])
-	var w := (_coin_width(price, 22) if lvl_ok else font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x) + 64.0
-	var rect := Rect2(center.x - w / 2.0, center.y - 19, w, 38)
-	_panel(rect, Color(0.05, 0.08, 0.11, 0.92), GOLD if lvl_ok else Color(0.45, 0.75, 1), 19, 2)
-	_draw_lock(rect.position + Vector2(20, 20), 0.55)
-	if lvl_ok:
-		_coin_amount(rect.position + Vector2(36, 27), price, 22)
-	else:
-		_text(rect.position + Vector2(38, 26), label, 20, Color(0.7, 0.85, 1))
+## Seviye tablosu: mevcut seviyenin çevresindeki seviyeler, ödülleri ve açtıkları.
+func _draw_level_table(content: Rect2) -> void:
+	var lvl := int(main.save["level"])
+	var rows := 8
+	var row_h := minf(60.0, (content.size.y - 8.0) / rows)
+	var first := clampi(lvl - 1, 1, maxi(1, GameData.MAX_LEVEL - rows + 1))
+	for i in rows:
+		var L := first + i
+		if L > GameData.MAX_LEVEL:
+			break
+		var r := Rect2(content.position.x, content.position.y + i * row_h, content.size.x, row_h - 6.0)
+		var is_cur := L == lvl
+		var done := L < lvl
+		_panel(r, Color(GOLD, 0.16) if is_cur else Color(1, 1, 1, 0.04), GOLD if is_cur else Color(1, 1, 1, 0.06), 12, 2 if is_cur else 1)
+		_level_badge(r.position + Vector2(28, r.size.y / 2.0), 17.0, L)
+		var unlocks := PackedStringArray()
+		for item in GameData.SKINS + GameData.KNIVES:
+			if int(item["level"]) == L and int(item["price"]) > 0:
+				unlocks.append(Loc.t(item["id"] + ".name"))
+		var mid := r.position.y + r.size.y / 2.0
+		var reward_w := _coin_width(GameData.level_reward(L), 18) + 20.0
+		var status_w := 110.0
+		var text_w := r.size.x - 60.0 - reward_w - status_w - 40.0
+		if not unlocks.is_empty():
+			var txt := Loc.t("level_unlocks") % ", ".join(unlocks)
+			_text(Vector2(r.position.x + 58, mid + 6), txt, _fit_size(txt, 16, text_w), Color(1, 1, 1, 0.85))
+		if is_cur:
+			var need := GameData.xp_needed(lvl)
+			var xb := Rect2(r.end.x - status_w - reward_w - 60.0, mid - 9, reward_w + 50.0, 18)
+			_progress_bar(xb, float(main.save["xp"]) / need, Color(0.45, 0.75, 1))
+			_text(Vector2(xb.position.x, xb.end.y - 3), "%d/%d XP" % [int(main.save["xp"]), need], 12, Color.WHITE,
+				HORIZONTAL_ALIGNMENT_CENTER, xb.size.x)
+		else:
+			_coin_amount(Vector2(r.end.x - status_w - reward_w, mid + 7), GameData.level_reward(L), 18,
+				GOLD if not done else Color(1, 1, 1, 0.4))
+		var status := Loc.t("current") if is_cur else (Loc.t("done") if done else "")
+		if status != "":
+			_text(Vector2(r.end.x - status_w, mid + 6), status, 15, GOLD if is_cur else Color(0.5, 1, 0.6),
+				HORIZONTAL_ALIGNMENT_CENTER, status_w - 8.0)
+		elif L > lvl:
+			_draw_lock(Vector2(r.end.x - status_w / 2.0, mid), 0.6)
 
+
+# --- Ayarlar penceresi ------------------------------------------------------------
+
+func _draw_settings(s: Vector2) -> void:
+	cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.6))
+	var r := Rect2(s.x / 2.0 - 260, s.y / 2.0 - 230, 520, 460)
+	_panel(r, Color(0.05, 0.08, 0.11, 0.97), Color(1, 1, 1, 0.12), 22, 2, 16)
+	_text(Vector2(r.position.x, r.position.y + 50), Loc.t("settings"), 28, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_button(Rect2(r.end.x - 66, r.position.y + 14, 48, 46), "settings_close", "X", Color(0.55, 0.25, 0.25), true, 20)
+	var on_col := Color(0.22, 0.6, 0.33)
+	var off_col := Color(0.3, 0.34, 0.42)
+	var rows := [
+		["sound", Loc.t("sound_on") if main.save["sound"] else Loc.t("sound_off"), on_col if main.save["sound"] else off_col],
+		["aim", Loc.t("auto_aim_on") if main.save["auto_aim"] else Loc.t("auto_aim_off"), on_col if main.save["auto_aim"] else off_col],
+		["lang", Loc.t("language"), Color(0.3, 0.42, 0.7)],
+		["fullscreen", Loc.t("fullscreen"), Color(0.3, 0.42, 0.7)],
+		["admin_open", Loc.t("admin"), Color(0.4, 0.3, 0.55)],
+	]
+	var y := r.position.y + 78
+	for row in rows:
+		_button(Rect2(r.position.x + 40, y, r.size.x - 80, 60), row[0], row[1], row[2], true, 20)
+		y += 72
+	buttons.append({"rect": Rect2(Vector2.ZERO, s), "id": "settings_close", "enabled": true})
 
 # --- Oyun sonu -----------------------------------------------------------------
 
@@ -1114,21 +1188,63 @@ func _draw_stats(s: Vector2) -> void:
 	main.perf_mark("hud_alive", _t)
 	_t = Time.get_ticks_usec()
 	# Sağ üst: liderler ve duraklatma
+	# Sağ üst: liderler (sıra, seviye, isim, leş, bıçak). Dokununca tam skor tablosu açılır.
 	var board: Array[Fighter] = main.leaderboard(5)
-	var lx := s.x - 236.0
-	_panel(Rect2(lx - 12, 14, 232, 40 + board.size() * 27), PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
-	_text(Vector2(lx, 39), Loc.t("leaders"), 18, GOLD)
+	var pw := 290.0
+	var lx := s.x - pw - 14.0
+	var lb := Rect2(lx, 14, pw, 42 + board.size() * 28)
+	_panel(lb, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(lx + 14, 38), Loc.t("leaders"), 17, GOLD)
+	_skull(Vector2(lx + pw - 84, 32), 6.0, Color(1, 0.6, 0.55))
+	KnifeArt.draw(cv, Vector2(lx + pw - 30, 31), PI / 4.0, 0.55, 0, false)
 	for i in board.size():
 		var f := board[i]
 		var col := Color(1, 0.92, 0.3) if f.is_player else Color.WHITE
-		var ry := 66.0 + i * 27.0
-		GameData.disc(cv, Vector2(lx + 6, ry - 6), 5.0, f.color)
-		var nm := "%d. %s" % [i + 1, f.display_name]
-		_text(Vector2(lx + 18, ry), nm, _fit_size(nm, 17, 150.0), col)
-		_text(Vector2(lx, ry), str(f.knives), 17, col, HORIZONTAL_ALIGNMENT_RIGHT, 205.0)
+		var ry := 66.0 + i * 28.0
+		_text(Vector2(lx + 10, ry), "%d" % (i + 1), 15, Color(1, 1, 1, 0.6))
+		_level_badge(Vector2(lx + 40, ry - 6), 11.0, f.level)
+		_text(Vector2(lx + 58, ry), f.display_name, _fit_size(f.display_name, 16, 130.0), col)
+		_text(Vector2(lx + pw - 104, ry), str(f.kills), 16, Color(1, 0.6, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 40.0)
+		_text(Vector2(lx + pw - 50, ry), str(f.knives), 16, col, HORIZONTAL_ALIGNMENT_CENTER, 40.0)
+	buttons.append({"rect": lb, "id": "scoreboard", "enabled": true})
 	if main.state == "playing" and main.net_mode == "":
-		_button(Rect2(lx - 76, 14, 54, 48), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
-	main.perf_mark("hud_leaders", _t)
+		_button(Rect2(lx - 66, 14, 54, 48), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
+	if scoreboard_open:
+		_draw_scoreboard(s)
+
+
+## Tam skor tablosu: arenadaki herkes; seviye, leş ve bıçak sayısıyla.
+func _draw_scoreboard(s: Vector2) -> void:
+	var list: Array[Fighter] = main.leaderboard(30)
+	var w := minf(640.0, s.x - 80.0)
+	var row_h := 30.0
+	var h := minf(s.y - 120.0, 96.0 + list.size() * row_h)
+	var r := Rect2((s.x - w) / 2.0, 70, w, h)
+	_panel(r, Color(0.04, 0.06, 0.09, 0.94), Color(1, 1, 1, 0.12), 18, 2, 12)
+	_text(Vector2(r.position.x, r.position.y + 38), Loc.t("scoreboard"), 22, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	var hy := r.position.y + 64
+	_text(Vector2(r.position.x + 20, hy), "#", 13, Color(1, 1, 1, 0.5))
+	_text(Vector2(r.position.x + 92, hy), Loc.t("sb_player"), 13, Color(1, 1, 1, 0.5))
+	_text(Vector2(r.end.x - 180, hy), Loc.t("sb_kills"), 13, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_CENTER, 70.0)
+	_text(Vector2(r.end.x - 100, hy), Loc.t("sb_knives"), 13, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_CENTER, 80.0)
+	for i in list.size():
+		var y := hy + 12 + i * row_h
+		if y + row_h > r.end.y - 6:
+			break
+		var f := list[i]
+		var human := f.is_player or f.peer_id != 0
+		if f.is_player:
+			_panel(Rect2(r.position.x + 10, y, r.size.x - 20, row_h - 2), Color(GOLD, 0.15), Color(0, 0, 0, 0), 8)
+		var ty := y + 21
+		_text(Vector2(r.position.x + 20, ty), str(i + 1), 15, Color(1, 1, 1, 0.7))
+		_level_badge(Vector2(r.position.x + 66, ty - 6), 11.0, f.level)
+		GameData.disc(cv, Vector2(r.position.x + 92, ty - 6), 5.0, f.color)
+		var nm := f.display_name + ("  •" if human and main.net_mode == "client" else "")
+		_text(Vector2(r.position.x + 104, ty), nm, _fit_size(nm, 16, r.size.x - 320.0), Color(1, 0.92, 0.3) if f.is_player else Color.WHITE)
+		_text(Vector2(r.end.x - 180, ty), str(f.kills), 16, Color(1, 0.6, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 70.0)
+		_text(Vector2(r.end.x - 100, ty), str(f.knives), 16, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 80.0)
+	_text(Vector2(r.position.x, r.end.y + 22), Loc.t("sb_hint"), 13, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	buttons.append({"rect": r, "id": "scoreboard", "enabled": true})
 
 
 ## Sol üst oyuncu kartı: portre + seviye, isim, can barı, bıçak/leş/altın sayaçları.

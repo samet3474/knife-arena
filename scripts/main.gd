@@ -26,10 +26,10 @@ const PICKUP_RADIUS := 42.0
 const POWERUP_MAX := 6
 const POWERUP_RADIUS := 46.0
 const START_KNIVES := 4
-const THROW_SPEED := 950.0
+const THROW_SPEED := 1150.0
 const THROW_LIFE := 0.8
 const THROW_DAMAGE := 22.0
-const THROW_COOLDOWN := 0.35
+const THROW_COOLDOWN := 0.3
 const AIM_ASSIST_RANGE := 750.0
 const AIM_ASSIST_ANGLE := 0.6
 const HEARING_RANGE := 1100.0
@@ -175,7 +175,7 @@ func _ready() -> void:
 
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = true
-	camera.position_smoothing_speed = 7.0
+	camera.position_smoothing_speed = 9.0
 	add_child(camera)
 	camera.make_current()
 	_startup_log("katmanlar+zemin", _t0)
@@ -244,6 +244,15 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		d.knives = 8
 	if "--mp" in args:
 		on_button("mp")
+	for a in args:
+		if a.begins_with("--popup="):
+			var which := a.trim_prefix("--popup=")
+			if which == "settings":
+				hud.popup = "settings"
+			else:
+				hud.open_shop(which)
+	if "--scoreboard" in args:
+		hud.scoreboard_open = true
 	for a in args:
 		if a.begins_with("--admin-login="):
 			admin_connect(a.trim_prefix("--admin-login="))
@@ -329,11 +338,11 @@ func level_ok(item: Dictionary) -> bool:
 	return int(save["level"]) >= int(item.get("level", 1))
 
 
-func _buy(item: Dictionary) -> void:
+func _buy(item: Dictionary) -> bool:
 	var price := int(item["price"])
 	if int(save["coins"]) < price or not level_ok(item):
 		sfx.play("error", 0.0, 0.0)
-		return
+		return false
 	save["coins"] = int(save["coins"]) - price
 	var owned: Array = save["owned"]
 	owned.append(item["id"])
@@ -341,6 +350,18 @@ func _buy(item: Dictionary) -> void:
 	_write_save()
 	sfx.play("buy", 0.0, 0.0)
 	hud.flash_banner(Loc.t("bought"))
+	return true
+
+
+## Koleksiyondaki SEÇ / SATIN AL: sahip olunan öğeyi kullanır, olunmayanı satın alıp kullanır.
+func equip_or_buy(id: String) -> void:
+	var is_skin := id.begins_with("skin_")
+	var item: Dictionary = GameData.SKINS[GameData.skin_index(id)] if is_skin else GameData.KNIVES[GameData.knife_index(id)]
+	if not skin_unlocked(item) and not _buy(item):
+		return
+	save["skin_id" if is_skin else "knife_id"] = id
+	_write_save()
+	sfx.play("select", 0.0, 0.0)
 
 
 func player_name() -> String:
@@ -446,7 +467,7 @@ func _end_round(won: bool) -> void:
 		"collected": match_coins,
 		"kills": player.kills * GameData.COIN_PER_KILL,
 		"rank": rank_bonus,
-		"time": int(round_time / 10.0),
+		"time": int(round_time / 20.0),
 	}
 	var total := 0
 	for v in last_reward.values():
@@ -456,7 +477,7 @@ func _end_round(won: bool) -> void:
 
 	# XP ve seviye: leş + sıralama + açılan kutular + hayatta kalma süresi
 	var xp_rank: int = GameData.XP_RANK[rank - 1] if rank <= GameData.XP_RANK.size() else GameData.XP_RANK_REST
-	var xp_gain := player.kills * GameData.XP_PER_KILL + xp_rank + boxes_opened * GameData.XP_PER_BOX + int(round_time / 5.0)
+	var xp_gain := player.kills * GameData.XP_PER_KILL + xp_rank + boxes_opened * GameData.XP_PER_BOX + int(round_time / 10.0)
 	last_reward["xp"] = xp_gain
 	last_reward["level_before"] = int(save["level"])
 	last_reward["xp_before"] = int(save["xp"])
@@ -491,12 +512,8 @@ func on_button(id: String) -> void:
 			player_dash()
 			return
 		"play":
-			var pending := pending_purchase()
-			if pending.is_empty():
-				sfx.play("click", 0.0, 0.0)
-				_start_round(true)
-			else:
-				_buy(pending)
+			sfx.play("click", 0.0, 0.0)
+			_start_round(true)
 			return
 		"mp":
 			sfx.play("click", 0.0, 0.0)
@@ -563,7 +580,7 @@ func _toggle_fullscreen() -> void:
 
 
 func cycle_skin(step: int) -> void:
-	var list := GameData.available_skins()
+	var list := GameData.available_skins().filter(func(sk: Dictionary) -> bool: return skin_unlocked(sk))
 	var i := 0
 	for j in list.size():
 		if list[j]["id"] == save["skin_id"]:
@@ -585,6 +602,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_SHIFT:
 			if state == "playing":
 				player_dash()
+		KEY_TAB:
+			if state == "playing":
+				hud.scoreboard_open = not hud.scoreboard_open
 		KEY_SPACE, KEY_ENTER:
 			if state == "splash":
 				on_button("splash")
@@ -1072,7 +1092,7 @@ func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 			for k in 8:
 				_spawn_pickup(pos, Vector2.from_angle(randf() * TAU) * randf_range(120.0, 320.0))
 		"coins":
-			_spawn_coins(pos, randi_range(7, 12))
+			_spawn_coins(pos, randi_range(3, 6))
 		"powerup":
 			if opener != null:
 				var type: String = ["speed", "shield", "magnet", "heal"].pick_random()
@@ -1133,7 +1153,7 @@ func _arena_event() -> void:
 	var center := player.position if player != null and player.alive else Vector2.ZERO
 	match kind:
 		"coins":
-			for k in 30:
+			for k in 12:
 				coins_pickups.append({"pos": _random_point(zone_radius - 60.0).lerp(center, 0.35),
 					"vel": Vector2.ZERO, "phase": randf() * TAU})
 		"knives":
@@ -1549,7 +1569,7 @@ func _kill(f: Fighter) -> void:
 	for k in f.knives + 3:
 		_spawn_pickup(f.position + _random_point(12.0), Vector2.from_angle(randf() * TAU) * randf_range(150.0, 480.0))
 	f.knives = 0
-	_spawn_coins(f.position, mini(3 + f.kills * 2, 12))
+	_spawn_coins(f.position, mini(1 + f.kills, 5))
 	var killer := instance_from_id(f.last_attacker_id) as Fighter
 	if killer == f:
 		killer = null
@@ -2219,6 +2239,7 @@ func human_count() -> int:
 	return n
 
 
+## Liderler: bıçak sayısına, eşitlikte leşe göre sıralı canlı savaşçılar.
 func leaderboard(n: int) -> Array[Fighter]:
 	var list := _alive_fighters()
 	list.sort_custom(func(a: Fighter, b: Fighter) -> bool: return a.knives > b.knives)

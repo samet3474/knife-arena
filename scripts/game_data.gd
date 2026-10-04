@@ -43,18 +43,18 @@ const POWERUPS := {
 }
 
 ## Ekonomi: maç sonu ödülleri (altın).
-const COIN_PER_KILL := 8
-const RANK_BONUS := [60, 40, 30, 20, 20] # 1.-5. sıra; daha aşağısı RANK_BONUS_REST
-const RANK_BONUS_REST := 10
-const DAILY_BONUS := 50
+const COIN_PER_KILL := 4
+const RANK_BONUS := [30, 20, 14, 10, 8] # 1.-5. sıra; daha aşağısı RANK_BONUS_REST
+const RANK_BONUS_REST := 4
+const DAILY_BONUS := 30
 const STARTING_COINS := 40
 
 ## Seviye sistemi: maç sonu XP ile seviye atlanır, her seviye altın ödülü verir.
 const MAX_LEVEL := 50
-const XP_PER_KILL := 25
-const XP_RANK := [120, 80, 60, 40, 40] # 1.-5. sıra
-const XP_RANK_REST := 20
-const XP_PER_BOX := 6
+const XP_PER_KILL := 15
+const XP_RANK := [70, 45, 32, 22, 18] # 1.-5. sıra
+const XP_RANK_REST := 8
+const XP_PER_BOX := 3
 
 ## Gizemli kutu içerikleri. good: iyi mi kötü mü, weight: çıkma ağırlığı.
 const MYSTERY := [
@@ -71,12 +71,12 @@ const MYSTERY := [
 
 ## Bir sonraki seviyeye geçmek için gereken XP (seviye arttıkça yavaşça artar).
 static func xp_needed(level: int) -> int:
-	return 100 + (level - 1) * 45
+	return 150 + (level - 1) * 90
 
 
 ## Seviyeye ulaşınca verilen altın ödülü; her 5 seviyede bir büyük ödül.
 static func level_reward(level: int) -> int:
-	return 150 + level * 10 if level % 5 == 0 else 30 + level * 6
+	return 80 + level * 8 if level % 5 == 0 else 15 + level * 4
 
 
 static func roll_mystery() -> Dictionary:

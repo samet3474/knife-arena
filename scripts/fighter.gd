@@ -7,13 +7,13 @@ extends Node2D
 const FLASH_SHADER := preload("res://shaders/flash.gdshader")
 const BODY_RADIUS := 28.0
 const MAX_KNIVES := 45
-const BASE_SPEED := 270.0
+const BASE_SPEED := 335.0
 const SPRITE_SIZE := 84.0
 const MAGNET_RADIUS := 280.0
 const WALK_FPS := 12.0
 const DASH_SPEED := 950.0
 const DASH_TIME := 0.18
-const DASH_COOLDOWN := 2.6
+const DASH_COOLDOWN := 2.0
 
 ## Telefonda daha hafif çizim (bıçak hareket izleri ve parlamaları çizilmez). main.gd ayarlar.
 static var low_fx := false
@@ -114,7 +114,7 @@ func ring_radius() -> float:
 
 
 func move_speed() -> float:
-	var s := BASE_SPEED - mini(knives, MAX_KNIVES) * 2.2
+	var s := BASE_SPEED - mini(knives, MAX_KNIVES) * 1.7
 	if speed_t > 0.0:
 		s *= 1.45
 	if slow_t > 0.0:
@@ -146,7 +146,7 @@ func knife_blocks(point: Vector2) -> bool:
 
 
 func tick(delta: float) -> void:
-	orbit_angle = wrapf(orbit_angle + (2.6 + knives * 0.03) * delta, 0.0, TAU)
+	orbit_angle = wrapf(orbit_angle + (3.4 + knives * 0.035) * delta, 0.0, TAU)
 	moving = move_dir.length() > 0.15
 	if moving:
 		facing = move_dir.normalized()
@@ -190,7 +190,7 @@ func tick(delta: float) -> void:
 
 ## İstemci tarafı: konum sunucudan gelir; burada yalnızca animasyon ve efektler ilerler.
 func visual_tick(delta: float) -> void:
-	orbit_angle = wrapf(orbit_angle + (2.6 + knives * 0.03) * delta, 0.0, TAU)
+	orbit_angle = wrapf(orbit_angle + (3.4 + knives * 0.035) * delta, 0.0, TAU)
 	moving = move_dir.length() > 0.15 or dash_t > 0.0
 	if moving:
 		if move_dir.length() > 0.15:
