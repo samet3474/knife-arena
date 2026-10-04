@@ -33,6 +33,7 @@ var banner_color := Color(1, 0.4, 0.35)
 var name_edit: LineEdit
 var admin_edit: LineEdit
 var chat_edit: LineEdit
+var say_edit: LineEdit # yönetim paneli: duyuru metni
 var _style_cache := {}
 var _fit_cache := {}
 static var perf_draw_us := 0
@@ -56,6 +57,7 @@ func _ready() -> void:
 	_create_name_edit()
 	_create_admin_edit()
 	_create_chat_edit()
+	_create_say_edit()
 
 
 ## Her karede çağrılır: kontroller her karede, bilgi panelleri saniyede 20-30 kez yenilenir.
@@ -104,6 +106,27 @@ func _create_name_edit() -> void:
 	name_edit.focus_exited.connect(_on_name_focus_exited)
 	name_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(name_edit, Loc.t("name_placeholder")))
 	add_child(name_edit)
+
+
+## Yönetim paneli duyuru kutusu.
+func _create_say_edit() -> void:
+	say_edit = LineEdit.new()
+	say_edit.max_length = 120
+	say_edit.add_theme_font_size_override("font_size", 15)
+	say_edit.placeholder_text = "Herkese duyurulacak mesaj..."
+	for style_name in ["normal", "focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.02, 0.03, 0.05)
+		sb.set_corner_radius_all(10)
+		sb.set_border_width_all(1)
+		sb.border_color = GOLD if style_name == "focus" else Color(1, 1, 1, 0.2)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		say_edit.add_theme_stylebox_override(style_name, sb)
+	say_edit.text_submitted.connect(func(_t: String) -> void: _on_button("adm_say"))
+	say_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(say_edit, "Duyuru"))
+	say_edit.visible = false
+	add_child(say_edit)
 
 
 ## Ana menü sohbet yazma kutusu.
@@ -197,6 +220,14 @@ func _process(delta: float) -> void:
 		name_edit.visible = popup == ""
 	elif name_edit.has_focus():
 		name_edit.release_focus()
+	var panel: bool = main.state == "server" or main.state == "admin"
+	say_edit.visible = panel
+	if panel:
+		var ss := _screen()
+		say_edit.position = Vector2(ss.x - 14.0 - 360.0 + 14.0, 68.0 + 58.0)
+		say_edit.size = Vector2(360.0 - 112.0, 40.0)
+	elif say_edit.has_focus():
+		say_edit.release_focus()
 	chat_edit.visible = in_menu and popup == ""
 	if chat_edit.visible:
 		# İsim yazılmadan sohbete yazılamaz: kutu kilitli ve ne yapılacağını söyler
@@ -335,6 +366,10 @@ func _on_button(id: String) -> void:
 			pass
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
+		"adm_say":
+			main.admin_say(say_edit.text)
+			say_edit.text = ""
+			say_edit.release_focus()
 		"chat_send":
 			main.send_chat(chat_edit.text)
 			chat_edit.text = ""
@@ -634,123 +669,209 @@ func _draw_server(s: Vector2) -> void:
 	var remote: bool = main.net_mode == "client"
 	cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0.035, 0.05, 0.07))
 	# Başlık şeridi
-	_panel(Rect2(0, 0, s.x, 60), Color(0.06, 0.09, 0.13), Color(0, 0, 0, 0), 0, 0, 6)
-	_text(Vector2(24, 40), "KNIFE ARENA  •  YÖNETİM PANELİ", 26, GOLD)
+	_panel(Rect2(0, 0, s.x, 56), Color(0.06, 0.09, 0.13), Color(0, 0, 0, 0), 0, 0, 6)
+	_text(Vector2(20, 37), "KNIFE ARENA  •  YÖNETİM PANELİ", 24, GOLD)
 	var pulse := 0.6 + 0.4 * sin(Time.get_ticks_msec() / 300.0)
 	var online := not d.is_empty()
-	GameData.disc(cv, Vector2(s.x - (450 if remote else 300), 31), 7.0, Color(0.3, 1, 0.4, pulse) if online else Color(1, 0.6, 0.3, pulse))
-	_text(Vector2(s.x - (436 if remote else 286), 38), ("Çalışıyor  •  " + _fmt_duration(int(d.get("uptime", 0)))) if online else "Veri bekleniyor...",
-		18, Color(0.6, 1, 0.7))
+	var right_x := s.x - (170.0 if remote else 20.0)
+	var status := ("Sunucu çalışıyor  •  " + _fmt_duration(int(d.get("uptime", 0)))) if online else "Veriler bekleniyor..."
+	var sw := font.get_string_size(status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+	GameData.disc(cv, Vector2(right_x - sw - 16, 29), 7.0, Color(0.3, 1, 0.4, pulse) if online else Color(1, 0.6, 0.3, pulse))
+	_text(Vector2(right_x - sw, 35), status, 17, Color(0.6, 1, 0.7))
 	if remote:
-		_button(Rect2(s.x - 150, 10, 130, 40), "menu", Loc.t("logout"), Color(0.55, 0.25, 0.25), true, 16)
+		_button(Rect2(s.x - 150, 8, 130, 40), "menu", Loc.t("logout"), Color(0.55, 0.25, 0.25), true, 16)
 
-	var lx := 20.0
-	var lw := 400.0
-	# Adres kutusu
-	var box := Rect2(lx, 76, lw, 104)
-	_panel(box, PANEL_BG, GOLD, 16, 2)
-	var urls: Array = d.get("urls", [])
-	if remote:
-		_text(Vector2(box.position.x + 16, box.position.y + 28), "Bağlı sunucu:", 15, Color(1, 1, 1, 0.7))
-		var host: String = main._mp_host()
-		_text(Vector2(box.position.x + 16, box.position.y + 70), host, _fit_size(host, 22, lw - 32.0), Color.WHITE)
-	else:
-		_text(Vector2(box.position.x + 16, box.position.y + 28), "Telefondan katıl (aynı Wi-Fi):", 15, Color(1, 1, 1, 0.7))
-		if urls.is_empty():
-			_text(Vector2(box.position.x + 16, box.position.y + 70), "Web sürümü bulunamadı", 20, Color(1, 0.5, 0.45))
-		else:
-			_text(Vector2(box.position.x + 16, box.position.y + 72), urls[0], _fit_size(urls[0], 28, lw - 32.0), Color.WHITE)
-		_text(Vector2(box.position.x + 16, box.end.y - 10), "PC'den: oyunu aç > ÇOK OYUNCULU", 12, Color(1, 1, 1, 0.45))
+	var gap := 14.0
+	var lw := 330.0
+	var rw := 360.0
+	var mw := s.x - lw - rw - gap * 4
+	var top := 68.0
+	var lx := gap
+	var mx := lx + lw + gap
+	var rx := mx + mw + gap
 
-	# İstatistikler
+	# --- Sol: durum ---
 	var players: Array = d.get("players", [])
-	var st := Rect2(lx, 194, lw, 112)
-	_panel(st, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
-	var stats := [["Bağlı oyuncu", str(players.size())], ["Bot (canlı / hedef)", "%d / %d" % [int(d.get("bots", 0)), int(d.get("bot_target", 0))]],
-		["Arenadaki savaşçı", str(d.get("alive", 0))], ["Toplam giriş / yönetici", "%d / %d" % [int(d.get("joins", 0)), int(d.get("admins", 0))]]]
+	var st := Rect2(lx, top, lw, 150)
+	_panel(st, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	var cloud_on: bool = d.get("cloud", false)
+	var stats := [
+		["Arenadaki oyuncu", str(players.size()), GOLD],
+		["Menüde bekleyen", str(d.get("menu_count", 0)), GOLD],
+		["Bot (canlı / hedef)", "%d / %d" % [int(d.get("bots", 0)), int(d.get("bot_target", 0))], GOLD],
+		["Skor tablosundaki oyuncu", str(d.get("lb_count", 0)), GOLD],
+		["Kalıcı kayıt (bulut)", "Açık" if cloud_on else "Kapalı", Color(0.5, 1, 0.6) if cloud_on else Color(1, 0.6, 0.4)],
+	]
+	if not remote:
+		var urls: Array = d.get("urls", [])
+		stats.push_front(["Telefondan (aynı Wi-Fi)", urls[0] if not urls.is_empty() else "-", Color.WHITE])
 	for i in stats.size():
-		var y := st.position.y + 26 + i * 24
-		_text(Vector2(st.position.x + 16, y), stats[i][0], 15, Color(1, 1, 1, 0.7))
-		_text(Vector2(st.position.x, y), stats[i][1], 16, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, st.size.x - 16)
+		var y := st.position.y + 24 + i * 24
+		_text(Vector2(st.position.x + 14, y), stats[i][0], 14, Color(1, 1, 1, 0.65))
+		_text(Vector2(st.position.x, y), stats[i][1], _fit_size(stats[i][1], 15, 150.0), stats[i][2], HORIZONTAL_ALIGNMENT_RIGHT, st.size.x - 14)
 
-	# Arena kontrolleri
-	var ct := Rect2(lx, 320, lw, 184)
-	_panel(ct, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
-	# Alan daralması aç / kapat
+	# --- Sol: kontroller ---
+	var ct := Rect2(lx, st.end.y + gap, lw, 296)
+	_panel(ct, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(ct.position.x + 14, ct.position.y + 26), "ARENA KONTROLLERİ", 15, GOLD)
+	_text(Vector2(ct.position.x + 14, ct.position.y + 58), "Bot sayısı", 15, Color.WHITE)
+	_button(Rect2(ct.end.x - 150, ct.position.y + 36, 44, 36), "adm_bot_minus", "-", Color(0.55, 0.25, 0.25), true, 22)
+	_text(Vector2(ct.end.x - 104, ct.position.y + 62), str(d.get("bot_target", 0)), 20, GOLD, HORIZONTAL_ALIGNMENT_CENTER, 50.0)
+	_button(Rect2(ct.end.x - 56, ct.position.y + 36, 44, 36), "adm_bot_plus", "+", Color(0.22, 0.6, 0.33), true, 22)
 	var zone_on: bool = d.get("zone", false)
-	var ztxt := "ALAN DARALMASI: AÇIK (%d)" % int(d.get("zone_r", 0)) if zone_on else "ALAN DARALMASI: KAPALI"
-	_button(Rect2(ct.position.x + 12, ct.position.y + 122, ct.size.x - 24, 50), "adm_zone", ztxt,
-		Color(0.75, 0.2, 0.25) if zone_on else Color(0.3, 0.36, 0.45), true, 16)
-	_text(Vector2(ct.position.x + 16, ct.position.y + 30), "Bot sayısı", 17, Color.WHITE)
-	_text(Vector2(ct.position.x + 16, ct.position.y + 48), "(yalnızca ÇOK OYUNCULU arenası)", 11, Color(1, 1, 1, 0.45))
-	_button(Rect2(ct.end.x - 160, ct.position.y + 8, 48, 42), "adm_bot_minus", "-", Color(0.55, 0.25, 0.25), true, 24)
-	_text(Vector2(ct.end.x - 112, ct.position.y + 37), str(d.get("bot_target", 0)), 22, GOLD, HORIZONTAL_ALIGNMENT_CENTER, 56.0)
-	_button(Rect2(ct.end.x - 58, ct.position.y + 8, 48, 42), "adm_bot_plus", "+", Color(0.22, 0.6, 0.33), true, 24)
-	_button(Rect2(ct.position.x + 12, ct.position.y + 66, 182, 48), "adm_reset", "ARENAYI SIFIRLA", Color(0.7, 0.3, 0.2), true, 15)
-	_button(Rect2(ct.end.x - 194, ct.position.y + 66, 182, 48), "adm_event", "OLAY BAŞLAT", Color(0.75, 0.55, 0.12), true, 15)
+	var chat_locked: bool = d.get("chat_locked", false)
+	var grid := [
+		["adm_reset", "ARENAYI SIFIRLA", Color(0.6, 0.32, 0.22)],
+		["adm_event", "OLAY BAŞLAT", Color(0.7, 0.52, 0.14)],
+		["adm_boss", "DEV ÇAĞIR", Color(0.65, 0.2, 0.2)],
+		["adm_zone", "ALAN: AÇIK" if zone_on else "ALAN: KAPALI", Color(0.75, 0.2, 0.25) if zone_on else Color(0.3, 0.36, 0.45)],
+		["adm_chatlock", "SOHBETİ AÇ" if chat_locked else "SOHBETİ KAPAT", Color(0.22, 0.55, 0.33) if chat_locked else Color(0.4, 0.3, 0.55)],
+		["adm_chatclear", "SOHBETİ TEMİZLE", Color(0.4, 0.3, 0.55)],
+		["adm_lbreset", "SKOR TABLOSUNU SIFIRLA", Color(0.7, 0.22, 0.22)],
+	]
+	var bw := (lw - 14 * 2 - 10) / 2.0
+	for i in grid.size():
+		var full := i == grid.size() - 1 # son buton tam genişlik (tehlikeli işlem)
+		var bx := ct.position.x + 14 + (0.0 if full else (i % 2) * (bw + 10))
+		var by := ct.position.y + 84 + (i / 2) * 50
+		_button(Rect2(bx, by, lw - 28 if full else bw, 42), grid[i][0], grid[i][1], grid[i][2], true, 13)
 
-	# Olay günlüğü
-	var lg := Rect2(lx, 518, lw, s.y - 538)
-	_panel(lg, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
-	_text(Vector2(lg.position.x + 16, lg.position.y + 26), "Günlük (giren / çıkan / leşler)", 15, GOLD)
+	# --- Sol: sunucu günlüğü ---
+	var lg := Rect2(lx, ct.end.y + gap, lw, s.y - ct.end.y - gap * 2)
+	_panel(lg, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(lg.position.x + 14, lg.position.y + 24), "SUNUCU GÜNLÜĞÜ", 15, GOLD)
 	var log: Array = d.get("log", [])
-	var rows := int((lg.size.y - 40) / 20)
+	var rows := int((lg.size.y - 40) / 19)
 	for i in mini(rows, log.size()):
 		var e: Dictionary = log[i]
-		var y := lg.position.y + 50 + i * 20
-		_text(Vector2(lg.position.x + 14, y), e["time"], 12, Color(1, 1, 1, 0.4))
+		var y := lg.position.y + 46 + i * 19
+		_text(Vector2(lg.position.x + 12, y), e["time"], 11, Color(1, 1, 1, 0.4))
 		var txt: String = e["text"]
-		_text(Vector2(lg.position.x + 80, y), txt, _fit_size(txt, 14, lw - 96.0), e["col"])
+		_text(Vector2(lg.position.x + 74, y), txt, _fit_size(txt, 13, lw - 86.0), e["col"])
 
-	_draw_server_players(Rect2(lx + lw + 20, 76, s.x - lw - lx * 2 - 20, s.y - 96), players)
+	# --- Orta: oyuncular (üst) ve giriş/çıkış kayıtları (alt) ---
+	var ph := clampf(76.0 + maxi(players.size(), 1) * 54.0, 170.0, (s.y - top - gap) * 0.5)
+	_draw_server_players(Rect2(mx, top, mw, ph), players)
+	_draw_conn_log(Rect2(mx, top + ph + gap, mw, s.y - top - ph - gap * 2), d.get("conn", []))
+
+	# --- Sağ: duyuru ve sohbet yönetimi ---
+	var an := Rect2(rx, top, rw, 112)
+	_panel(an, PANEL_BG, GOLD, 14, 2)
+	_text(Vector2(an.position.x + 14, an.position.y + 26), "DUYURU GÖNDER", 15, GOLD)
+	_text(Vector2(an.position.x + 14, an.position.y + 46), "Oyundaki ve menüdeki herkes görür", 11, Color(1, 1, 1, 0.5))
+	_button(Rect2(an.end.x - 84, an.position.y + 58, 70, 40), "adm_say", "GÖNDER", Color(0.75, 0.55, 0.12), true, 13)
+	_draw_chat_mod(Rect2(rx, an.end.y + gap, rw, s.y - an.end.y - gap * 2), d)
 
 
-## Bağlı oyuncular tablosu ve oyuncu başına yönetim butonları.
+## Yönetim paneli: oyuncular (cihaz, konum, seviye, leş) ve oyuncu başına işlemler.
 func _draw_server_players(r: Rect2, players: Array) -> void:
-	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
-	_text(Vector2(r.position.x + 18, r.position.y + 30), "OYUNCULAR", 18, GOLD)
-	var cols := [["Oyuncu", 64.0], ["Sv", 190.0], ["IP adresi", 222.0], ["Leş", 330.0], ["Bıçak", 370.0], ["Durum", 422.0], ["Süre", 482.0]]
-	for c in cols:
-		_text(Vector2(r.position.x + float(c[1]), r.position.y + 58), c[0], 13, Color(1, 1, 1, 0.5))
-	cv.draw_line(Vector2(r.position.x + 12, r.position.y + 68), Vector2(r.end.x - 12, r.position.y + 68), Color(1, 1, 1, 0.1), 1.0)
+	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(r.position.x + 14, r.position.y + 24), "ARENADAKİ OYUNCULAR (%d)" % players.size(), 15, GOLD)
 	if players.is_empty():
-		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0), "Henüz bağlı oyuncu yok", 20, Color(1, 1, 1, 0.5),
+		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0 + 10), "Şu an arenada oyuncu yok", 16, Color(1, 1, 1, 0.45),
 			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
-		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0 + 28), "Oyuncular ÇOK OYUNCULU'ya basınca burada görünür", 15,
-			Color(1, 1, 1, 0.35), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 		return
-	var row_h := 60.0
+	var acts := [["coins", "+100", Color(0.75, 0.55, 0.12)], ["level", "+1 Sv", Color(0.3, 0.45, 0.85)],
+		["heal", "Can", Color(0.22, 0.6, 0.33)], ["kick", "At", Color(0.7, 0.25, 0.22)]]
+	var row_h := 52.0
 	for i in players.size():
-		var y := r.position.y + 76 + i * row_h
+		var y := r.position.y + 36 + i * row_h
 		if y + row_h > r.end.y:
 			break
 		var pl: Dictionary = players[i]
 		var peer := int(pl["peer"])
-		var row := Rect2(r.position.x + 10, y, r.size.x - 20, row_h - 6)
+		var row := Rect2(r.position.x + 8, y, r.size.x - 16, row_h - 6)
 		_panel(row, Color(1, 1, 1, 0.04) if i % 2 == 0 else Color(1, 1, 1, 0.02), Color(0, 0, 0, 0), 10)
 		var mid := row.position.y + row.size.y / 2.0
 		if String(pl["skin"]) != "":
-			_draw_skin(pl["skin"], Vector2(row.position.x + 28, mid - 2), 50.0)
-		var x0 := r.position.x
-		var pname := String(pl["name"])
-		_text(Vector2(x0 + 64, mid + 6), pname, _fit_size(pname, 16, 120.0), Color.WHITE)
-		_text(Vector2(x0 + 190, mid + 6), str(pl["level"]), 15, Color(0.6, 0.85, 1))
-		_text(Vector2(x0 + 222, mid + 6), String(pl["ip"]), _fit_size(String(pl["ip"]), 13, 104.0), Color(1, 1, 1, 0.7))
-		_text(Vector2(x0 + 330, mid + 6), str(pl["kills"]), 15, Color(1, 0.6, 0.5))
-		_text(Vector2(x0 + 370, mid + 6), str(pl["knives"]), 15, Color.WHITE)
+			_draw_skin(pl["skin"], Vector2(row.position.x + 22, mid - 2), 42.0)
 		var alive: bool = pl["alive"]
-		_text(Vector2(x0 + 422, mid + 6), "Canlı" if alive else "Ölü", 14, Color(0.5, 1, 0.6) if alive else Color(1, 0.5, 0.45))
-		_text(Vector2(x0 + 482, mid + 6), _fmt_duration(int(pl["since"])), 13, Color(1, 1, 1, 0.6))
-		# İşlem butonları (sağa yaslı)
-		var acts := [["coins", "+100", Color(0.75, 0.55, 0.12)], ["level", "+1 Sv", Color(0.3, 0.45, 0.85)],
-			["heal", "Can", Color(0.22, 0.6, 0.33)], ["kick", "At", Color(0.7, 0.25, 0.22)]]
-		var bx := row.end.x - acts.size() * 58.0
-		if bx < x0 + 550:
-			bx = x0 + 550
+		GameData.disc(cv, Vector2(row.position.x + 40, mid + 12), 4.0, Color(0.4, 1, 0.5) if alive else Color(1, 0.4, 0.35))
+		var info_w := row.size.x - acts.size() * 52.0 - 60.0
+		var pname := "%s  •  Sv %d  •  %d leş" % [String(pl["name"]), int(pl["level"]), int(pl["kills"])]
+		_text(Vector2(row.position.x + 50, mid - 2), pname, _fit_size(pname, 14, info_w), Color.WHITE)
+		var where := String(pl.get("dev", "?"))
+		if String(pl.get("loc", "")) != "":
+			where += "  •  " + String(pl["loc"])
+		where += "  •  " + _fmt_duration(int(pl["since"]))
+		_text(Vector2(row.position.x + 50, mid + 15), where, _fit_size(where, 11, info_w), Color(0.6, 0.85, 1, 0.8))
+		var bx := row.end.x - acts.size() * 52.0
 		for a in acts:
-			_button(Rect2(bx, row.position.y + 7, 52, 40), "adm_%s_%d" % [a[0], peer], a[1], a[2], true, 13)
-			bx += 58.0
+			_button(Rect2(bx, row.position.y + 6, 48, 34), "adm_%s_%d" % [a[0], peer], a[1], a[2], true, 12)
+			bx += 52.0
 
+
+## Yönetim paneli: giriş / çıkış kayıtları (sunucu yeniden başlasa da saklanır).
+func _draw_conn_log(r: Rect2, conn: Array) -> void:
+	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
+	_text(Vector2(r.position.x + 14, r.position.y + 24), "GİRİŞ / ÇIKIŞ KAYITLARI", 15, GOLD)
+	if conn.is_empty():
+		_text(Vector2(r.position.x, r.position.y + r.size.y / 2.0), "Henüz kayıt yok", 15, Color(1, 1, 1, 0.45),
+			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		return
+	var evs := {"giris_menu": ["menüye girdi", Color(0.5, 1, 0.6)], "giris_arena": ["arenaya girdi", Color(0.6, 0.85, 1)],
+		"cikis": ["çıktı", Color(1, 0.55, 0.45)]}
+	var rows := int((r.size.y - 40) / 20)
+	var shown := 0
+	for i in range(conn.size() - 1, -1, -1): # en yeni üstte
+		if shown >= rows:
+			break
+		var c: Dictionary = conn[i]
+		var y := r.position.y + 46 + shown * 20
+		shown += 1
+		var ev: Array = evs.get(String(c.get("ev", "")), [String(c.get("ev", "")), Color.WHITE])
+		_text(Vector2(r.position.x + 12, y), String(c.get("t", "")), 11, Color(1, 1, 1, 0.4))
+		var nm := String(c.get("n", "?"))
+		_text(Vector2(r.position.x + 92, y), nm, _fit_size(nm, 13, 100.0), Color.WHITE)
+		var evt: String = ev[0]
+		if int(c.get("dur", -1)) >= 0:
+			evt += " (" + _fmt_duration(int(c["dur"])) + ")"
+		_text(Vector2(r.position.x + 196, y), evt, _fit_size(evt, 12, 130.0), ev[1])
+		var where := String(c.get("dev", ""))
+		if String(c.get("loc", "")) != "":
+			where += "  •  " + String(c["loc"])
+		_text(Vector2(r.position.x + 330, y), where, _fit_size(where, 12, r.size.x - 342.0), Color(1, 1, 1, 0.6))
+
+
+## Yönetim paneli: sohbet mesajları (sil / sustur) ve susturulanlar.
+func _draw_chat_mod(r: Rect2, d: Dictionary) -> void:
+	_panel(r, PANEL_BG, Color(0.45, 0.75, 1, 0.3), 14, 1)
+	var locked: bool = d.get("chat_locked", false)
+	_text(Vector2(r.position.x + 14, r.position.y + 24), "GENEL SOHBET" + ("  (KAPALI)" if locked else ""), 15,
+		Color(1, 0.6, 0.45) if locked else Color(0.6, 0.85, 1))
+	var muted: Array = d.get("muted", [])
+	var mute_h := 0.0 if muted.is_empty() else 30.0 + ceili(muted.size() / 2.0) * 34.0
+	var msgs: Array = d.get("chat", [])
+	var list_bottom := r.end.y - mute_h - 8.0
+	if msgs.is_empty():
+		_text(Vector2(r.position.x, r.position.y + (list_bottom - r.position.y) / 2.0 + 20), "Sohbette mesaj yok", 14,
+			Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	var row_h := 40.0
+	var y := r.position.y + 36
+	for i in range(msgs.size() - 1, -1, -1): # en yeni üstte
+		if y + row_h > list_bottom:
+			break
+		var m: Dictionary = msgs[i]
+		var row := Rect2(r.position.x + 8, y, r.size.x - 16, row_h - 4)
+		var is_admin: bool = m.get("a", false)
+		_panel(row, Color(GOLD, 0.1) if is_admin else Color(1, 1, 1, 0.04), Color(0, 0, 0, 0), 8)
+		var nm := String(m.get("n", "?")) + ": "
+		var line := nm + String(m.get("m", ""))
+		var tw := row.size.x - (20.0 if is_admin else 128.0)
+		_text(Vector2(row.position.x + 10, row.position.y + 23), line, _fit_size(line, 13, tw), GOLD if is_admin else Color.WHITE)
+		if not is_admin:
+			var mid := int(m.get("id", -1))
+			_button(Rect2(row.end.x - 112, row.position.y + 5, 50, 26), "adm_chatdel_%d" % mid, "Sil", Color(0.6, 0.3, 0.25), true, 12)
+			_button(Rect2(row.end.x - 58, row.position.y + 5, 52, 26), "adm_chatmute_%d" % mid, "Sustur", Color(0.45, 0.3, 0.55), true, 11)
+		y += row_h
+	if not muted.is_empty():
+		var my := r.end.y - mute_h
+		_text(Vector2(r.position.x + 14, my + 18), "Susturulanlar (dokun: kaldır)", 12, Color(1, 0.6, 0.45))
+		var cw := (r.size.x - 28 - 8) / 2.0
+		for i in muted.size():
+			var bx := r.position.x + 14 + (i % 2) * (cw + 8)
+			var by := my + 26 + (i / 2) * 34
+			_button(Rect2(bx, by, cw, 30), "adm_unmute_%d" % i, String(muted[i]) + "  x", Color(0.35, 0.3, 0.4), true, 12)
 
 ## Menüden açılan yönetici girişi ekranı (şifre kutusu).
 func _draw_admin_login(s: Vector2) -> void:
@@ -927,6 +1048,8 @@ func _draw_chat(r: Rect2) -> void:
 	var note := ""
 	if not online:
 		note = st[0] if main.lobby_state != "" else Loc.t("chat_connecting")
+	elif main.save["top"] is Dictionary and main.save["top"].get("chat_locked", false) and (main.chat as Array).is_empty():
+		note = Loc.t("chat_locked")
 	# Yazma kutusu ve gönder butonu (kutu LineEdit olarak _process'te konumlanır)
 	_button(Rect2(r.end.x - 50, r.end.y - 46, 42, 38), "chat_send", ">", Color(0.28, 0.42, 0.88), true, 20)
 	# Mesajlar: en yenisi altta
@@ -953,7 +1076,7 @@ func _draw_chat(r: Rect2) -> void:
 		if y - (lines.size() - 1) * lh < top:
 			break
 		var ly := y - (lines.size() - 1) * lh
-		var name_col := GOLD if String(m["n"]).to_lower() == me else Color(0.6, 0.85, 1)
+		var name_col := Color(1, 0.45, 0.35) if m.get("a", false) else (GOLD if String(m["n"]).to_lower() == me else Color(0.6, 0.85, 1))
 		for k in lines.size():
 			var line: String = lines[k]
 			var lx := r.position.x + 12

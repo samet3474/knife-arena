@@ -13,6 +13,7 @@ const HUD_SCRIPT := preload("res://scripts/hud.gd")
 const SFX_SCRIPT := preload("res://scripts/sfx.gd")
 const NET_SCRIPT := preload("res://scripts/net.gd")
 const WEB_SCRIPT := preload("res://scripts/web_server.gd")
+const CLOUD_SCRIPT := preload("res://scripts/cloud_store.gd")
 
 const SAVE_PATH := "user://save.cfg"
 const ARENA_RADIUS := 1800.0
@@ -237,6 +238,8 @@ func _ready() -> void:
 
 	if daily_message != "":
 		hud.flash_banner(daily_message, Color(1, 0.85, 0.3), 4.0)
+	if OS.has_feature("web"):
+		_fetch_location()
 	_startup_log("arayüz+ağ", _t0)
 	_t0 = Time.get_ticks_msec()
 	_start_round("--autostart" in args)
@@ -2023,9 +2026,19 @@ func _start_server(args: PackedStringArray) -> void:
 		web_ok = web.start(web_dir) == OK
 	_build_world()
 	_load_records()
+	cloud = CLOUD_SCRIPT.new()
+	add_child(cloud)
+	if cloud.enabled:
+		slog("Bulut kaydı açık (GitHub Gist)", Color(0.6, 0.85, 1))
+		cloud.load_state(_apply_cloud)
+	else:
+		slog("Bulut kaydı kapalı (GIST_ID / GIST_TOKEN yok)", Color(1, 0.75, 0.4))
 	for i in bot_target:
 		_spawn_bot(BOT_NAMES.pick_random())
 	slog("Sunucu başlatıldı (sürüm %d)" % NET_VERSION, Color(0.5, 1, 0.6))
+	for a in args:
+		if a.begins_with("--say="):
+			get_tree().create_timer(7.0).timeout.connect(server_admin_say.bind(0, a.trim_prefix("--say=").replace("_", " ")))
 	print("")
 	print("=== KNIFE ARENA SUNUCUSU ÇALIŞIYOR ===")
 	for ip in IP.get_local_addresses():
@@ -2132,6 +2145,7 @@ func server_join(peer: int, info: Dictionary) -> void:
 	for b in bushes:
 		bush_data.append({"pos": b["pos"], "r": b["r"], "blobs": b["blobs"]})
 	net.s_welcome.rpc_id(peer, {"id": f.net_id, "bushes": bush_data, "top": top_lists(), "v": NET_VERSION})
+	_session(peer, info, "arena")
 	if first_join:
 		total_joins += 1
 		slog("%s katıldı (%s)" % [fname, peer_info[peer]["ip"]], Color(0.5, 1, 0.6))
@@ -2147,40 +2161,211 @@ const TOP_N := 10
 const LB_STATS_MAX := ["sk", "sc", "mk", "mc", "sw", "mb"]
 
 
+var lb_epoch := 0 # skor tablosunun "dönemi": yönetici sıfırlayınca artar (eski listeler geri gelmesin)
+
+
 func _load_records() -> void:
 	var f := FileAccess.open(RECORDS_PATH, FileAccess.READ)
 	if f == null:
 		return
 	var d = JSON.parse_string(f.get_as_text())
-	if d is Dictionary:
-		records = d
-		# Eski kayıtlar: tek "k" (toplam leş) alanı tek oyunculu leşe taşınır
-		for r in records.values():
-			if r is Dictionary and r.has("k") and not r.has("sk"):
-				r["sk"] = r["k"]
-			if r is Dictionary and r.has("c") and not r.has("sc"):
-				r["sc"] = r["c"]
+	if not d is Dictionary:
+		return
+	if d.has("records") and d["records"] is Dictionary:
+		records = d["records"]
+		lb_epoch = int(d.get("epoch", 0))
+		if d.get("conn") is Array:
+			conn_log = d["conn"]
+	else:
+		records = d # eski biçim: doğrudan kayıtlar
+	# Eski alanlar: "k" (toplam leş) → tek oyunculu leş, "c" (altın) → tek oyunculu altın
+	for r in records.values():
+		if r is Dictionary and r.has("k") and not r.has("sk"):
+			r["sk"] = r["k"]
+		if r is Dictionary and r.has("c") and not r.has("sc"):
+			r["sc"] = r["c"]
+
+
+func _save_records() -> void:
+	var f := FileAccess.open(RECORDS_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(_state_dict()))
+	if cloud != null:
+		cloud.request_save(_state_dict())
 
 
 func _update_record(fname: String, info: Dictionary, level: int) -> void:
 	var key := fname.to_lower()
-	var r: Dictionary = records.get(key, {"n": fname, "l": 1, "c": 0})
+	var r: Dictionary = records.get(key, {"n": fname, "l": 1})
 	r["n"] = fname
-	# sk/sw: tek oyunculu leş/galibiyet, mk: çok oyunculu leş, mb: çok oyunculuda tek canda en çok leş
+	# sk/sc: tek oyunculu leş/altın, mk/mc: çok oyunculu leş/altın (en yüksek değer saklanır)
 	for stat in LB_STATS_MAX:
 		r[stat] = maxi(int(r.get(stat, 0)), clampi(int(info.get(stat, 0)), 0, 1000000))
 	r["l"] = maxi(int(r.get("l", 1)), level)
-	r["c"] = clampi(int(info.get("coins", 0)), 0, 10000000)
 	records[key] = r
-	var f := FileAccess.open(RECORDS_PATH, FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(records))
+	_save_records()
+
+
+## Ücretsiz sunucu uyuyup yeniden açılınca diski sıfırlanır. Oyuncuların elindeki son liste ile
+## tablo geri kurulur. Yönetici sıfırladıysa (daha yeni dönem) eski listeler kabul edilmez.
+func _merge_seed(seed: Dictionary) -> void:
+	var e := int(seed.get("e", 0))
+	if e < lb_epoch:
+		return
+	if e > lb_epoch:
+		records.clear()
+		lb_epoch = e
+	var changed := false
+	for stat in ["sk", "sc", "mk", "mc", "l"]:
+		var rows = seed.get(stat, [])
+		if not rows is Array:
+			continue
+		for row in rows.slice(0, TOP_N):
+			if not row is Array or row.size() < 2:
+				continue
+			var n := String(row[0]).strip_edges().left(14)
+			var v := clampi(int(row[1]), 0, 1000000)
+			if n == "" or v <= 0:
+				continue
+			var key := n.to_lower()
+			var r: Dictionary = records.get(key, {"n": n, "l": 1})
+			if int(r.get(stat, 0)) < v:
+				r[stat] = v
+				records[key] = r
+				changed = true
+	if changed:
+		_save_records()
+
+
+## --- Bağlantı kayıtları (yönetim paneli) ---
+## Kim, ne zaman, hangi cihazdan, nereden girdi/çıktı. Dosyaya ve (ayarlıysa) GitHub Gist'e yazılır;
+## sunucu yeniden başlasa da kaybolmaz.
+const CONN_KEEP := 300
+var conn_log: Array = [] # [{"t", "n", "ev", "dev", "loc", "dur"}] (en yeni sonda)
+var sessions := {} # bağlantı → {"n", "dev", "loc", "since", "where"}
+var cloud = null # cloud_store.gd (GIST_ID + GIST_TOKEN ortam değişkenleri varsa)
+
+
+func _state_dict() -> Dictionary:
+	return {"epoch": lb_epoch, "records": records, "conn": conn_log}
+
+
+func _now_str() -> String:
+	# Türkiye saati (UTC+3)
+	var d := Time.get_datetime_dict_from_unix_time(int(Time.get_unix_time_from_system()) + 3 * 3600)
+	return "%02d.%02d %02d:%02d" % [d["day"], d["month"], d["hour"], d["minute"]]
+
+
+func _conn_add(fname: String, ev: String, dev: String, loc: String, dur := -1) -> void:
+	conn_log.append({"t": _now_str(), "n": fname, "ev": ev, "dev": dev, "loc": loc, "dur": dur})
+	while conn_log.size() > CONN_KEEP:
+		conn_log.pop_front()
+	_save_records()
+
+
+## Menüye (lobi) ya da arenaya giren bağlantıyı kaydeder; aynı oturumda tekrar kaydetmez.
+func _session(peer: int, info: Dictionary, where: String) -> void:
+	var fname := String(info.get("name", "")).strip_edges().left(14)
+	if fname == "":
+		fname = "İsimsiz"
+	var dev := String(info.get("dev", "?")).left(30)
+	var loc := String(info.get("loc", "")).left(40)
+	if not sessions.has(peer):
+		sessions[peer] = {"n": fname, "dev": dev, "loc": loc, "since": Time.get_ticks_msec(), "where": where}
+		_conn_add(fname, "giris_" + where, dev, loc)
+	elif String(sessions[peer]["loc"]) == "" and loc != "":
+		sessions[peer]["loc"] = loc
+	if sessions[peer]["where"] != where and where == "arena":
+		sessions[peer]["where"] = where
+		sessions[peer]["n"] = fname
+		_conn_add(fname, "giris_arena", dev, loc)
+
+
+func _session_end(peer: int) -> void:
+	if not sessions.has(peer):
+		return
+	var s: Dictionary = sessions[peer]
+	sessions.erase(peer)
+	_conn_add(String(s["n"]), "cikis", String(s["dev"]), String(s["loc"]), (Time.get_ticks_msec() - int(s["since"])) / 1000)
+
+
+## Bulut kaydı yüklendi: kayıtları birleştir (yerel dosya boşsa buluttaki geçerli).
+func _apply_cloud(d: Dictionary) -> void:
+	var e := int(d.get("epoch", 0))
+	if e > lb_epoch:
+		records.clear()
+		lb_epoch = e
+	if e == lb_epoch and d.get("records") is Dictionary:
+		for key in d["records"].keys():
+			var cr: Dictionary = d["records"][key]
+			var r: Dictionary = records.get(key, cr.duplicate())
+			for stat in LB_STATS_MAX + ["l"]:
+				r[stat] = maxi(int(r.get(stat, 0)), int(cr.get(stat, 0)))
+			records[key] = r
+	if d.get("conn") is Array and (d["conn"] as Array).size() > conn_log.size():
+		# Bulutta daha uzun geçmiş var: onu al, bu oturumda eklenenleri sona ekle
+		var mine := conn_log.duplicate()
+		conn_log = d["conn"]
+		for c in mine:
+			if not c in conn_log:
+				conn_log.append(c)
+	slog("Bulut kaydı yüklendi (%d oyuncu, %d giriş kaydı)" % [records.size(), conn_log.size()], Color(0.6, 0.85, 1))
+	_save_records()
+
+
+## İstemci: cihaz bilgisi (yönetim panelinde "telefondan mı bilgisayardan mı" görünsün).
+func device_name() -> String:
+	if not OS.has_feature("web"):
+		return "PC (uygulama)"
+	var ua = JavaScriptBridge.eval("navigator.userAgent", true)
+	var s: String = ua if ua is String else ""
+	var browser := "Tarayıcı"
+	if s.contains("Edg"):
+		browser = "Edge"
+	elif s.contains("CriOS") or s.contains("Chrome"):
+		browser = "Chrome"
+	elif s.contains("Firefox") or s.contains("FxiOS"):
+		browser = "Firefox"
+	elif s.contains("Safari"):
+		browser = "Safari"
+	if OS.has_feature("web_ios") or s.contains("iPhone"):
+		return "iPhone • " + browser
+	if s.contains("iPad"):
+		return "iPad • " + browser
+	if OS.has_feature("web_android") or s.contains("Android"):
+		return "Android • " + browser
+	return "PC • " + browser
+
+
+var my_location := "" # istemci: şehir, ülke (ücretsiz konum servisinden)
+
+
+## İstemci: yaklaşık konumu bir kez öğrenir (şehir düzeyinde; yönetim paneli için).
+func _fetch_location() -> void:
+	var req := HTTPRequest.new()
+	add_child(req)
+	req.timeout = 8.0
+	req.request_completed.connect(func(_r: int, code: int, _h: PackedStringArray, body: PackedByteArray) -> void:
+		if code == 200:
+			var d = JSON.parse_string(body.get_string_from_utf8())
+			if d is Dictionary:
+				var parts := PackedStringArray()
+				for k in ["city", "country"]:
+					if String(d.get(k, "")) != "":
+						parts.append(String(d[k]))
+				my_location = ", ".join(parts)
+		req.queue_free())
+	if req.request("https://get.geojs.io/v1/ip/geo.json") != OK:
+		req.queue_free()
 
 
 ## --- Genel sohbet (sunucu) ---
-var chat_log: Array = [] # son mesajlar [{"n", "m"}]
+var chat_log: Array = [] # son mesajlar [{"id", "n", "m", "a" (yönetici)}]
 var chat_peers := {} # sohbete bağlı menüdeki istemciler
 var chat_last := {} # bağlantı → son mesaj zamanı (sel koruması)
+var chat_next_id := 1
+var chat_locked := false # yönetici sohbeti kapattı mı
+var muted := {} # susturulan isimler (küçük harf) → gösterilen isim
 
 
 func server_chat_join(peer: int, _player_name: String) -> void:
@@ -2188,28 +2373,69 @@ func server_chat_join(peer: int, _player_name: String) -> void:
 	net.s_chat.rpc_id(peer, chat_log, true)
 
 
-func server_chat(peer: int, player_name: String, text: String) -> void:
-	if not chat_peers.has(peer):
-		return
-	var now := Time.get_ticks_msec() / 1000.0
-	if now - float(chat_last.get(peer, -10.0)) < 1.2:
-		return
-	var fname := player_name.strip_edges().left(14)
-	var msg := text.strip_edges().replace("\n", " ").left(CHAT_MAX_LEN)
-	if fname == "" or msg == "":
-		return
-	chat_last[peer] = now
-	var m := {"n": fname, "m": msg}
+func _chat_add(fname: String, msg: String, admin := false) -> void:
+	var m := {"id": chat_next_id, "n": fname, "m": msg, "a": admin}
+	chat_next_id += 1
 	chat_log.append(m)
 	while chat_log.size() > CHAT_KEEP:
 		chat_log.pop_front()
 	for p in chat_peers.keys():
 		if multiplayer.get_peers().has(p):
 			net.s_chat.rpc_id(p, [m], false)
+
+
+## Sohbetin tamamını yeniden gönderir (mesaj silinince / temizlenince).
+func _chat_resend() -> void:
+	for p in chat_peers.keys():
+		if multiplayer.get_peers().has(p):
+			net.s_chat.rpc_id(p, chat_log, true)
+
+
+func server_chat(peer: int, player_name: String, text: String) -> void:
+	if not chat_peers.has(peer) or chat_locked:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - float(chat_last.get(peer, -10.0)) < 1.2:
+		return
+	var fname := player_name.strip_edges().left(14)
+	var msg := text.strip_edges().replace("\n", " ").left(CHAT_MAX_LEN)
+	if fname == "" or msg == "" or muted.has(fname.to_lower()):
+		return
+	chat_last[peer] = now
+	_chat_add(fname, msg)
 	slog("[sohbet] %s: %s" % [fname, msg], Color(0.75, 0.85, 1))
 
 
-func server_top_request(info: Dictionary) -> void:
+## Yönetici duyurusu: sohbete "YÖNETİCİ" olarak düşer ve oyundaki/menüdeki herkese büyük yazı çıkar.
+func server_admin_say(peer: int, text: String) -> void:
+	if peer != 0 and not admin_peers.has(peer):
+		return
+	var msg := text.strip_edges().replace("\n", " ").left(120)
+	if msg == "":
+		return
+	_chat_add("YÖNETİCİ", msg, true)
+	net.s_announce.rpc(msg)
+	slog("[duyuru] %s" % msg, Color(1, 0.85, 0.3))
+
+
+func client_announce(text: String) -> void:
+	if net_mode == "server":
+		return
+	hud.flash_banner(Loc.t("announce") % text, Color(1, 0.85, 0.3), 6.0)
+	sfx.play("unlock", -4.0, 0.0)
+
+
+## Yönetici (sunucu penceresinde ya da uzaktan) duyuru yazar.
+func admin_say(text: String) -> void:
+	if net_mode == "server":
+		server_admin_say(0, text)
+	elif state == "admin":
+		net.c_admin_say.rpc_id(1, text)
+
+
+func server_top_request(peer: int, info: Dictionary, seed: Dictionary) -> void:
+	_merge_seed(seed)
+	_session(peer, info, "menu")
 	var fname := String(info.get("name", "")).strip_edges().left(14)
 	if fname != "":
 		_update_record(fname, info, clampi(int(info.get("level", 1)), 1, GameData.MAX_LEVEL))
@@ -2219,6 +2445,8 @@ func top_lists() -> Dictionary:
 	var out := {}
 	var all: Array = records.values()
 	out["online"] = peers.size()
+	out["e"] = lb_epoch
+	out["chat_locked"] = chat_locked
 	for stat in ["sk", "sc", "mk", "mc", "l"]:
 		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get(stat, 0)) > int(b.get(stat, 0)))
 		var rows := []
@@ -2229,6 +2457,13 @@ func top_lists() -> Dictionary:
 		out[stat] = rows
 	return out
 
+
+## Menüdeki herkese güncel skor tablosunu gönderir (sıfırlama sonrası).
+func _push_top() -> void:
+	var data := top_lists()
+	for p in chat_peers.keys():
+		if multiplayer.get_peers().has(p):
+			net.s_top.rpc_id(p, data)
 
 func server_input(peer: int, move: Vector2, aim: Vector2, throw_held: bool, target: int) -> void:
 	var f := _fid(peers.get(peer, 0))
@@ -2248,6 +2483,7 @@ func server_dash(peer: int) -> void:
 
 
 func server_remove_peer(peer: int) -> void:
+	_session_end(peer)
 	chat_peers.erase(peer)
 	chat_last.erase(peer)
 	if admin_peers.has(peer):
@@ -2291,6 +2527,49 @@ func _admin(id: String) -> void:
 	elif id == "adm_event":
 		_arena_event()
 		slog("Arena olayı başlatıldı", Color(1, 0.85, 0.3))
+	elif id == "adm_boss":
+		if fighters.any(func(x: Fighter) -> bool: return x.alive and x.boss):
+			slog("Arenada zaten bir Dev var", Color(1, 0.75, 0.4))
+		else:
+			_spawn_boss()
+	elif id == "adm_lbreset":
+		# Yeni dönem: oyuncuların elindeki eski listeler artık geri yüklenmez
+		records.clear()
+		lb_epoch = maxi(lb_epoch + 1, int(Time.get_unix_time_from_system()))
+		_save_records()
+		_push_top()
+		slog("Skor tablosu sıfırlandı", Color(1, 0.5, 0.45))
+	elif id == "adm_chatclear":
+		chat_log.clear()
+		_chat_resend()
+		slog("Sohbet temizlendi", Color(1, 0.75, 0.4))
+	elif id == "adm_chatlock":
+		chat_locked = not chat_locked
+		_chat_add("YÖNETİCİ", "Sohbet kapatıldı." if chat_locked else "Sohbet yeniden açıldı.", true)
+		_push_top()
+		slog("Sohbet: %s" % ("KAPALI" if chat_locked else "AÇIK"), Color(1, 0.75, 0.4))
+	elif id.begins_with("adm_chatdel_") or id.begins_with("adm_chatmute_"):
+		var mid := id.get_slice("_", 2).to_int()
+		var mute := id.begins_with("adm_chatmute_")
+		var who := ""
+		for m in chat_log:
+			if int(m.get("id", -1)) == mid:
+				who = String(m["n"])
+		if mute and who != "" and who != "YÖNETİCİ":
+			# Susturulanın tüm mesajları silinir, yenileri kabul edilmez
+			muted[who.to_lower()] = who
+			chat_log = chat_log.filter(func(m: Dictionary) -> bool: return String(m["n"]).to_lower() != who.to_lower())
+			slog("%s sohbette susturuldu" % who, Color(1, 0.5, 0.45))
+		else:
+			chat_log = chat_log.filter(func(m: Dictionary) -> bool: return int(m.get("id", -1)) != mid)
+			slog("Sohbet mesajı silindi (%s)" % who, Color(1, 0.75, 0.4))
+		_chat_resend()
+	elif id.begins_with("adm_unmute_"):
+		var keys := muted.keys()
+		var i := id.get_slice("_", 2).to_int()
+		if i >= 0 and i < keys.size():
+			slog("%s susturması kaldırıldı" % muted[keys[i]], Color(0.5, 1, 0.6))
+			muted.erase(keys[i])
 	else:
 		# Oyuncuya yönelik komutlar: adm_<işlem>_<bağlantı>
 		var parts := id.split("_")
@@ -2412,6 +2691,7 @@ func _mp_connect() -> void:
 
 func _join_info() -> Dictionary:
 	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"]),
+		"dev": device_name(), "loc": my_location,
 		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"]),
 		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"]),
 		"sc": int(save["sp_coins"]), "mc": int(save["mp_coins"])}
@@ -2443,7 +2723,7 @@ func fetch_leaderboard(force := false) -> void:
 	if lobby_online:
 		if force or now - lb_fetched_at >= LB_REFRESH:
 			lb_fetched_at = now
-			net.c_top.rpc_id(1, _top_info())
+			net.c_top.rpc_id(1, _top_info(), save["top"] if save["top"] is Dictionary else {})
 		return
 	if lb_fetching:
 		return
@@ -2512,7 +2792,7 @@ func client_chat(msgs: Array, reset: bool) -> void:
 			test_chat = ""
 	for m in msgs:
 		if m is Dictionary:
-			chat.append({"n": String(m.get("n", "?")), "m": String(m.get("m", ""))})
+			chat.append({"n": String(m.get("n", "?")), "m": String(m.get("m", "")), "a": bool(m.get("a", false))})
 	while chat.size() > CHAT_KEEP:
 		chat.pop_front()
 	if not reset and not msgs.is_empty() and state == "menu":
@@ -2526,6 +2806,9 @@ func send_chat(text: String) -> void:
 	if String(save["player_name"]).strip_edges() == "":
 		hud.flash_banner(Loc.t("chat_need_name"), Color(1, 0.6, 0.3), 3.0)
 		return
+	if save["top"] is Dictionary and save["top"].get("chat_locked", false) and lobby_online:
+		hud.flash_banner(Loc.t("chat_locked"), Color(1, 0.6, 0.3), 3.0)
+		return
 	if not lobby_online:
 		var key := "mp_wait" if lobby_state in ["", "connecting"] else ("mp_outdated" if lobby_state == "outdated" else "chat_offline")
 		hud.flash_banner(Loc.t(key), Color(1, 0.6, 0.3), 3.0)
@@ -2537,7 +2820,7 @@ func _on_net_connected() -> void:
 	if lb_fetching and net_mode == "":
 		lobby_connected_at = Time.get_ticks_msec() / 1000.0
 		lb_fetched_at = Time.get_ticks_msec() / 1000.0
-		net.c_top.rpc_id(1, _top_info())
+		net.c_top.rpc_id(1, _top_info(), save["top"] if save["top"] is Dictionary else {})
 		net.c_chat_join.rpc_id(1, String(save["player_name"]).strip_edges())
 		return
 	if net_mode != "client":
@@ -3374,11 +3657,15 @@ func admin_data() -> Dictionary:
 			"peer": peer, "name": info["name"], "ip": info["ip"], "since": (now - int(info["since"])) / 1000,
 			"skin": f.skin_id if f != null else "", "level": f.level if f != null else 1,
 			"kills": f.kills if f != null else 0, "knives": f.knives if f != null else 0, "alive": f != null and f.alive,
+			"dev": String(info["info"].get("dev", "?")), "loc": String(info["info"].get("loc", "")),
 		})
 	return {
 		"uptime": now / 1000, "urls": server_urls, "players": players, "bots": bots, "bot_target": bot_target,
 		"alive": alive_count(), "joins": total_joins, "admins": admin_peers.size(), "log": server_log.slice(0, 30),
 		"zone": zone_on, "zone_r": int(zone_radius),
+		"chat": chat_log.slice(maxi(0, chat_log.size() - 14)), "chat_locked": chat_locked, "muted": muted.values(),
+		"lb_count": records.size(), "menu_count": chat_peers.size(), "cloud": cloud != null and cloud.enabled,
+		"conn": conn_log.slice(maxi(0, conn_log.size() - 40)),
 	}
 
 

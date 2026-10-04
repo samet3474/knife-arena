@@ -142,11 +142,25 @@ func s_grant(coins: int, levels: int) -> void:
 
 ## Ana menü skor tablosu: oyuna girmeden yalnızca listeyi ister.
 ## info: oyuncunun güncel istatistikleri (isim, leş, seviye, altın); tabloya işlenir.
+## seed: istemcinin elindeki son liste; sunucu yeniden başlayıp listeyi kaybettiyse bundan geri yükler.
 @rpc("any_peer", "reliable")
-func c_top(info: Dictionary) -> void:
+func c_top(info: Dictionary, seed: Dictionary) -> void:
 	if multiplayer.is_server():
-		main.server_top_request(info)
+		main.server_top_request(multiplayer.get_remote_sender_id(), info, seed)
 		s_top.rpc_id(multiplayer.get_remote_sender_id(), main.top_lists())
+
+
+## Yönetici duyurusu (yalnızca girişli yöneticiden kabul edilir).
+@rpc("any_peer", "reliable")
+func c_admin_say(text: String) -> void:
+	if multiplayer.is_server():
+		main.server_admin_say(multiplayer.get_remote_sender_id(), text)
+
+
+## Duyuru: oyundaki ve menüdeki herkese büyük yazı olarak gösterilir.
+@rpc("authority", "reliable")
+func s_announce(text: String) -> void:
+	main.client_announce(text)
 
 
 @rpc("authority", "reliable")
