@@ -108,7 +108,7 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
 	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0,
-	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0, "streak": 0, "uid": ""}
+	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0, "streak": 0, "uid": "", "seen_help": false}
 
 # Çok oyunculu
 var net_mode := ""
@@ -294,6 +294,8 @@ func _ready() -> void:
 		state = "splash"
 	_apply_test_args(args)
 	no_lobby = "--no-lb" in args
+	if state == "menu" and not save["seen_help"] and not "--screenshot" in " ".join(args):
+		hud.popup = "help"
 
 
 func _startup_log(part: String, start_ms: int) -> void:
@@ -340,6 +342,11 @@ func _apply_test_args(args: PackedStringArray) -> void:
 			var which := a.trim_prefix("--popup=")
 			if which == "settings":
 				hud.popup = "settings"
+			elif which == "help":
+				hud.popup = "help"
+				for b in args:
+					if b == "--help-page=2":
+						hud.help_page = 1
 			else:
 				hud.open_shop(which)
 	if "--scoreboard" in args:

@@ -36,6 +36,8 @@ var shop_preview := "" # koleksiyonda önizlenen kartın id'si
 var scoreboard_open := false
 var bigmap_open := false # dokununca açılan büyük harita
 var _swipe_from := Vector2(-9999, -9999) # koleksiyonda kaydırma başlangıcı
+var help_page := 0 # "Nasıl oynanır" rehberinin sayfası
+const HELP_PAGES := 2
 var lb_tab := "l" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
 ## Sohbetteki hızlı emojiler (telefonun emoji klavyesiyle her emoji de yazılabilir)
 const CHAT_EMOJIS := ["😀", "😂", "😍", "😎", "😡", "😭", "👍", "🔥", "💀", "❤"]
@@ -334,6 +336,15 @@ func _input(event: InputEvent) -> void:
 			dbg["last"] = event.position
 		elif event is InputEventMouseButton or event is InputEventMouseMotion:
 			dbg["mouse"] += 1
+	if event is InputEventScreenTouch and popup == "help":
+		var ht := event as InputEventScreenTouch
+		if ht.pressed:
+			_swipe_from = ht.position
+		elif _swipe_from.x > -1.0:
+			var hdx := ht.position.x - _swipe_from.x
+			if absf(hdx) > 90.0 and absf(hdx) > absf(ht.position.y - _swipe_from.y) * 1.5:
+				_on_button("help_prev" if hdx > 0 else "help_next")
+			_swipe_from = Vector2(-9999, -9999)
 	if event is InputEventScreenTouch and popup == "shop" and tab != "levels":
 		var st := event as InputEventScreenTouch
 		if st.pressed:
@@ -427,6 +438,19 @@ func _on_button(id: String) -> void:
 		"settings":
 			popup = "settings"
 			main.sfx.play("click", 0.0, 0.0)
+		"help_open":
+			popup = "help"
+			help_page = 0
+			main.sfx.play("click", 0.0, 0.0)
+		"help_close":
+			popup = ""
+			main.sfx.play("click", -4.0, 0.0)
+			if not main.save.get("seen_help", false):
+				main.save["seen_help"] = true
+				main._write_save()
+		"help_prev", "help_next":
+			help_page = clampi(help_page + (1 if id == "help_next" else -1), 0, HELP_PAGES - 1)
+			main.sfx.play("select", 0.0, 0.0)
 		"shop_use":
 			main.equip_or_buy(shop_preview)
 		"noop":
@@ -1087,6 +1111,8 @@ func _draw_menu(s: Vector2) -> void:
 		buttons.clear() # alttaki menü butonları pencere açıkken basılamasın
 		if popup == "shop":
 			_draw_shop(s, t)
+		elif popup == "help":
+			_draw_help(s, t)
 		else:
 			_draw_settings(s)
 
@@ -1103,6 +1129,9 @@ func _draw_menu_header(s: Vector2) -> void:
 		GameData.disc(cv, gc + Vector2.from_angle(TAU * k / 8.0) * 13.0, 4.5, Color.WHITE)
 	GameData.disc(cv, gc, 12.0, Color.WHITE)
 	GameData.disc(cv, gc, 5.5, Color(0.25, 0.3, 0.42))
+	x -= 12.0 + 52.0
+	var help := Rect2(x, 22, 52, 52)
+	_button(help, "help_open", "?", Color(0.22, 0.55, 0.4), true, 30)
 	x -= 12.0
 	var lvl := int(main.save["level"])
 	var need := GameData.xp_needed(lvl)
@@ -1774,6 +1803,127 @@ func _draw_level_table(content: Rect2) -> void:
 				HORIZONTAL_ALIGNMENT_CENTER, status_w - 8.0)
 		elif L > lvl:
 			_draw_lock(Vector2(r.end.x - status_w / 2.0, mid), 0.6)
+
+
+# --- Nasıl oynanır rehberi -------------------------------------------------------
+# İki sayfa, her sayfada 6 resimli kart. Yazılar telefonda okunabilsin diye büyük; kontroller
+# dokunmatik cihazda dokunmatik, bilgisayarda klavye olarak anlatılır.
+
+func _draw_help(s: Vector2, t: float) -> void:
+	cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.7))
+	var w := minf(s.x - 40.0, 1240.0)
+	var r := Rect2((s.x - w) / 2.0, 18, w, s.y - 36)
+	_panel(r, Color(0.05, 0.08, 0.11, 0.98), Color(GOLD, 0.5), 22, 2, 16)
+	_text(Vector2(r.position.x, r.position.y + 50), Loc.t("help_title"), 34, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	_button(Rect2(r.end.x - 80, r.position.y + 12, 64, 60), "help_close", "X", Color(0.55, 0.25, 0.25), true, 26)
+	var touch := _is_touch_device()
+	var cards: Array = HELP_CARDS[help_page]
+	var gap := 16.0
+	var top := r.position.y + 76.0
+	var bottom := r.end.y - 78.0
+	var cw := (r.size.x - 40.0 - gap * 2) / 3.0
+	var ch := (bottom - top - gap) / 2.0
+	for i in cards.size():
+		var cr := Rect2(r.position.x + 20 + (i % 3) * (cw + gap), top + (i / 3) * (ch + gap), cw, ch)
+		var key: String = cards[i]
+		var body := Loc.t("help_" + key + ("_touch" if touch else "_pc"))
+		if body.begins_with("help_"):
+			body = Loc.t("help_" + key)
+		_help_card(cr, key, Loc.t("help_" + key + "_t"), body, t)
+	# Alt: sayfa düğmeleri ve "başla"
+	var by := r.end.y - 66.0
+	var cx := r.position.x + r.size.x / 2.0
+	_button(Rect2(cx - 300, by, 120, 54), "help_prev", "<", Color(0.25, 0.3, 0.42), help_page > 0, 30)
+	for i in HELP_PAGES:
+		GameData.disc(cv, Vector2(cx - 150 + i * 26, by + 27), 8.0, GOLD if i == help_page else Color(1, 1, 1, 0.25))
+	if help_page < HELP_PAGES - 1:
+		_button(Rect2(cx - 100, by, 220, 54), "help_next", Loc.t("help_next"), Color(0.28, 0.42, 0.88), true, 24)
+	else:
+		_button(Rect2(cx - 100, by, 220, 54), "help_close", Loc.t("help_start"), Color(0.22, 0.66, 0.33), true, 24)
+	buttons.append({"rect": Rect2(Vector2.ZERO, s), "id": "noop", "enabled": true})
+
+
+const HELP_CARDS := [["move", "collect", "throw", "dash", "boxes", "zone"],
+	["boss", "powerups", "coins", "daily", "online", "tips"]]
+
+
+## Dokunmatik cihaz mı? (Bilgisayarda fare de "dokunma" gibi gösterildiği için ayrıca kontrol edilir.)
+func _is_touch_device() -> bool:
+	if OS.has_feature("mobile") or OS.has_feature("web_ios") or OS.has_feature("web_android"):
+		return true
+	if OS.has_feature("web"):
+		var coarse = JavaScriptBridge.eval("window.matchMedia && window.matchMedia('(pointer: coarse)').matches", true)
+		return coarse == true
+	return false
+
+
+func _help_card(r: Rect2, key: String, title: String, body: String, t: float) -> void:
+	_panel(r, Color(1, 1, 1, 0.045), Color(1, 1, 1, 0.1), 16, 1)
+	# Simge alanı (solda)
+	var ic := Vector2(r.position.x + 62, r.position.y + 62)
+	GameData.disc(cv, ic, 46.0, Color(0, 0, 0, 0.3))
+	_help_icon(key, ic, t)
+	# Başlık ve açıklama (sağda, satır kaydırmalı)
+	var tx := r.position.x + 122
+	var tw := r.end.x - tx - 14.0
+	_text(Vector2(tx, r.position.y + 42), title, _fit_size(title, 28, tw), GOLD)
+	# Telefonda da rahat okunsun: sığdığı en büyük yazı boyutu
+	var fs := 23
+	var lines := _wrap(body, fs, tw)
+	while fs > 16 and lines.size() * (fs + 7) > r.size.y - 70.0:
+		fs -= 1
+		lines = _wrap(body, fs, tw)
+	var y := r.position.y + 80.0
+	for l in lines:
+		if y > r.end.y - 8.0:
+			break
+		_text(Vector2(tx, y), l, fs, Color(1, 1, 1, 0.9))
+		y += fs + 7.0
+
+
+func _help_icon(key: String, c: Vector2, t: float) -> void:
+	match key:
+		"move":
+			cv.draw_arc(c, 34.0, 0.0, TAU, 32, Color(1, 1, 1, 0.5), 3.0)
+			GameData.disc(cv, c + Vector2.from_angle(t * 2.0) * 16.0, 16.0, Color(1, 1, 1, 0.7))
+		"collect":
+			for i in 6:
+				var a := t * 2.0 + TAU * i / 6.0
+				KnifeArt.draw(cv, c + Vector2.from_angle(a) * 30.0, a + PI / 2.0, 0.8, 0, false)
+		"throw":
+			GameData.disc(cv, c, 32.0, Color(0.95, 0.3, 0.25, 0.85))
+			KnifeArt.draw(cv, c, PI / 4.0, 1.3, 0, false)
+		"dash":
+			GameData.disc(cv, c, 30.0, Color(0.25, 0.55, 0.95, 0.85))
+			for k in 3:
+				var off := Vector2(-12 + k * 10, 0)
+				cv.draw_polyline(PackedVector2Array([c + off + Vector2(-5, -8), c + off + Vector2(4, 0), c + off + Vector2(-5, 8)]), Color.WHITE, 4.0)
+		"boxes":
+			main._draw_crate(cv, {"pos": c, "hp": 3, "rot": 0.08 * sin(t * 3.0), "shake": 0.0})
+		"zone":
+			cv.draw_arc(c, 34.0, 0.0, TAU, 32, Color(1, 0.3, 0.3, 0.9), 6.0)
+			GameData.disc(cv, c, 24.0 - 4.0 * sin(t * 2.0), Color(0.3, 0.6, 0.35))
+		"boss":
+			_draw_crown_icon(c + Vector2(0, -2), 1.6)
+		"powerups":
+			GameData.draw_infinity(cv, c + Vector2(0, -12), 1.0, Color(0.4, 0.95, 1))
+			main._draw_bomb(cv, c + Vector2(-16, 18), 0.6, t)
+			var tex := GameData.tex("pu_speed")
+			if tex != null:
+				cv.draw_texture_rect(tex, Rect2(c + Vector2(4, 4), Vector2(28, 28)), false)
+		"coins":
+			GameData.draw_coin(cv, c + Vector2(-10, 6), 18.0)
+			GameData.draw_coin(cv, c + Vector2(12, -6), 16.0)
+		"daily":
+			_level_badge(c, 28.0, 7)
+		"online":
+			for i in 3:
+				GameData.disc(cv, c + Vector2((i - 1) * 22, 0), 12.0, GameData.PLAYER_COLORS[i])
+			cv.draw_arc(c, 36.0, 0.0, TAU, 32, Color(1, 1, 1, 0.35), 2.0)
+		"tips":
+			GameData.disc(cv, c + Vector2(-10, 4), 16.0, Color(0.25, 0.55, 0.3))
+			GameData.disc(cv, c + Vector2(10, -2), 20.0, Color(0.3, 0.65, 0.35))
+			_text(Vector2(c.x - 20, c.y + 12), "?", 34, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 40.0)
 
 
 # --- Ayarlar penceresi ------------------------------------------------------------
