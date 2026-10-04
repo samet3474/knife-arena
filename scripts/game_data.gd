@@ -58,6 +58,14 @@ const QUESTS := [
 ]
 const DAILY_QUEST_COUNT := 3
 
+## Oyunculara sırayla verilen, birbirinden kolay ayırt edilen renkler (halka, isim, skor tablosu)
+const PLAYER_COLORS := [
+	Color(1.0, 0.35, 0.3), Color(0.3, 0.65, 1.0), Color(0.35, 0.9, 0.4), Color(1.0, 0.82, 0.2),
+	Color(0.8, 0.45, 1.0), Color(1.0, 0.55, 0.15), Color(0.2, 0.9, 0.85), Color(1.0, 0.45, 0.75),
+	Color(0.65, 1.0, 0.3), Color(0.55, 0.55, 1.0), Color(1.0, 0.95, 0.6), Color(0.3, 0.85, 0.6),
+	Color(0.95, 0.3, 0.55), Color(0.6, 0.8, 1.0), Color(0.9, 0.7, 0.45), Color(0.75, 0.95, 0.95),
+]
+
 ## Haritada doğrudan çıkan temel güçlendirmeler (özel güçler yalnızca gizemli kutulardan çıkar)
 const MAP_POWERUPS := ["heal", "knives", "speed", "magnet", "knives", "heal"]
 

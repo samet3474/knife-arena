@@ -37,6 +37,8 @@ var scoreboard_open := false
 var bigmap_open := false # dokununca açılan büyük harita
 var _swipe_from := Vector2(-9999, -9999) # koleksiyonda kaydırma başlangıcı
 var lb_tab := "l" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
+## Sohbetteki hızlı emojiler (telefonun emoji klavyesiyle her emoji de yazılabilir)
+const CHAT_EMOJIS := ["😀", "😂", "😍", "😎", "😡", "😭", "👍", "🔥", "💀", "❤"]
 var lb_mode := "mp" # sp (tek oyunculu) | mp (çok oyunculu)
 var banner_text := ""
 var banner_time := 0.0
@@ -91,7 +93,7 @@ func _draw_controls_layer() -> void:
 	# Performans göstergesi (kasma olursa sayıyla görülebilsin)
 	var fps := Engine.get_frames_per_second()
 	var fps_col := Color(0.5, 1, 0.6, 0.6) if fps >= 50 else (Color(1, 0.85, 0.3, 0.8) if fps >= 30 else Color(1, 0.4, 0.35, 0.9))
-	_text(Vector2(s.x / 2 - 50, s.y - 8), "%d FPS" % fps, 13, fps_col, HORIZONTAL_ALIGNMENT_CENTER, 100.0)
+	_text(Vector2(8, s.y - 6), "%d FPS" % fps, 12, fps_col)
 	if touch_debug:
 		var info := "bas:%d  kaldir:%d  surukle:%d  fare:%d  son:%s  joy:%d %s  buton:%s  ekran:%s" % [dbg["down"], dbg["up"], dbg["drag"],
 			dbg["mouse"], (dbg["last"] as Vector2).round(), joy_index, joy_vector().snappedf(0.01), dbg["btn"], s.round()]
@@ -444,6 +446,13 @@ func _on_button(id: String) -> void:
 			main.admin_say(say_edit.text)
 			say_edit.text = ""
 			say_edit.release_focus()
+		_ when id.begins_with("emo_"):
+			var e: String = CHAT_EMOJIS[id.trim_prefix("emo_").to_int()]
+			if chat_edit.editable and (chat_edit.text + e).length() <= chat_edit.max_length:
+				chat_edit.text += e
+				main.sfx.play("select", -8.0, 0.0)
+			elif not chat_edit.editable:
+				flash_banner(Loc.t("chat_need_name"), Color(1, 0.6, 0.3), 2.5)
 		"chat_send":
 			main.send_chat(chat_edit.text)
 			chat_edit.text = ""
@@ -1196,11 +1205,21 @@ func _draw_chat(r: Rect2) -> void:
 		note = Loc.t("chat_locked")
 	# Yazma kutusu ve gönder butonu (kutu LineEdit olarak _process'te konumlanır)
 	_button(Rect2(r.end.x - 50, r.end.y - 46, 42, 38), "chat_send", ">", Color(0.28, 0.42, 0.88), true, 20)
+	# Hızlı emoji satırı: dokununca yazı kutusuna eklenir
+	var ew := (r.size.x - 16.0) / CHAT_EMOJIS.size()
+	for i in CHAT_EMOJIS.size():
+		var er := Rect2(r.position.x + 8 + i * ew, r.end.y - 86, ew - 3, 34)
+		_panel(er, Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.08), 8, 1)
+		# Genişlik verilmez (taşan metni kırpmasın); ortalama elle yapılır
+		var efs := 17
+		var eww := font.get_string_size(CHAT_EMOJIS[i], HORIZONTAL_ALIGNMENT_LEFT, -1, efs).x
+		cv.draw_string(font, Vector2(er.get_center().x - eww / 2.0, er.position.y + 24), CHAT_EMOJIS[i], HORIZONTAL_ALIGNMENT_LEFT, -1, efs, Color(1, 0.9, 0.55))
+		buttons.append({"rect": er, "id": "emo_%d" % i, "enabled": true})
 	# Mesajlar: en yenisi altta
 	var fs := 14
 	var lh := 18.0
 	var width := r.size.x - 24.0
-	var y := r.end.y - 56.0
+	var y := r.end.y - 98.0
 	var top := r.position.y + 40.0
 	var msgs: Array = main.chat
 	if msgs.is_empty() or note != "":
@@ -1818,7 +1837,7 @@ func _draw_stats(s: Vector2) -> void:
 	_draw_player_card(p)
 	main.perf_mark("hud_card", _t)
 	_t = Time.get_ticks_usec()
-	var mm := Rect2(s.x - 16 - 168, 14, 168, 168)
+	var mm := Rect2(16, 14, 168, 168)
 	_draw_minimap(mm)
 	buttons.append({"rect": mm, "id": "bigmap", "enabled": true})
 	main.perf_mark("hud_minimap", _t)
@@ -1834,7 +1853,7 @@ func _draw_stats(s: Vector2) -> void:
 	for ai in active.size():
 		var entry: Array = active[ai]
 		var left: float = entry[1]
-		var c := Vector2(x0 + ai * slot, s.y - 74.0)
+		var c := Vector2(x0 + ai * slot, s.y - 150.0)
 		_panel(Rect2(c.x - 34, c.y - 32, 68, 82), Color(0, 0, 0, 0.45), Color(1, 1, 1, 0.12), 14, 1)
 		GameData.disc(cv, c, 24.0, Color(0, 0, 0, 0.5))
 		var info: Dictionary = GameData.POWERUPS.get(entry[0], {})
@@ -1867,8 +1886,8 @@ func _draw_stats(s: Vector2) -> void:
 	# Sağ üst: liderler (sıra, seviye, isim, leş, bıçak). Dokununca tam skor tablosu açılır.
 	var board: Array[Fighter] = main.leaderboard(5)
 	var pw := 270.0
-	var lx := 16.0
-	var ly := 62.0
+	var lx := s.x - 16.0 - pw
+	var ly := 14.0
 	var lb := Rect2(lx, ly, pw, 40 + board.size() * 27)
 	_panel(lb, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
 	_text(Vector2(lx + 14, ly + 25), Loc.t("leaders") + "  >", 17, GOLD)
@@ -1876,8 +1895,10 @@ func _draw_stats(s: Vector2) -> void:
 	KnifeArt.draw(cv, Vector2(lx + pw - 30, ly + 17), PI / 4.0, 0.55, 0, false)
 	for i in board.size():
 		var f := board[i]
-		var col := Color(1, 0.92, 0.3) if f.is_player else Color.WHITE
+		var col := f.color.lightened(0.35)
 		var ry := ly + 52.0 + i * 27.0
+		if f.is_player:
+			_panel(Rect2(lx + 4, ry - 19, pw - 8, 25), Color(1, 1, 1, 0.1), Color(0, 0, 0, 0), 8)
 		_text(Vector2(lx + 10, ry), "%d" % (i + 1), 15, Color(1, 1, 1, 0.6))
 		_level_badge(Vector2(lx + 40, ry - 6), 11.0, f.level)
 		_text(Vector2(lx + 58, ry), f.display_name, _fit_size(f.display_name, 16, 130.0), col)
@@ -1885,7 +1906,7 @@ func _draw_stats(s: Vector2) -> void:
 		_text(Vector2(lx + pw - 50, ry), str(f.knives), 16, col, HORIZONTAL_ALIGNMENT_CENTER, 40.0)
 	buttons.append({"rect": Rect2(lx, ly, pw, 36), "id": "scoreboard", "enabled": true})
 	if main.state == "playing" and main.net_mode == "":
-		_button(Rect2(mm.position.x - 70, 14, 58, 52), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
+		_button(Rect2(mm.end.x + 12, 14, 58, 52), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
 	if scoreboard_open:
 		_draw_scoreboard(s)
 	if bigmap_open:
@@ -1935,9 +1956,12 @@ func _draw_scoreboard(s: Vector2) -> void:
 ## büyük oyuncu kartı yok; arena daha geniş görünür.
 func _draw_player_card(p: Fighter) -> void:
 	var w := 230.0 + (54.0 if p.bombs > 0 else 0.0)
-	_panel(Rect2(16, 14, w, 40), PANEL_BG, Color(1, 1, 1, 0.1), 20, 1)
-	var x := 30.0
-	var row := 41.0
+	var s := _screen()
+	var bx := s.x / 2.0 - w / 2.0
+	var by := s.y - 58.0
+	_panel(Rect2(bx, by, w, 42), PANEL_BG, Color(1, 1, 1, 0.14), 21, 1)
+	var x := bx + 14.0
+	var row := by + 28.0
 	KnifeArt.draw(cv, Vector2(x + 8, row - 7), PI / 4.0, 0.7, p.knife_kind, false)
 	_text(Vector2(x + 22, row), str(p.knives), 18, Color.WHITE)
 	x += 66.0
@@ -2034,28 +2058,36 @@ func _draw_minimap(rect: Rect2, big := false) -> void:
 		cv.draw_arc(mc + Vector2(-2, -2), 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.6), 2.0)
 		cv.draw_line(mc + Vector2(2, 2), mc + Vector2(6, 6), Color(1, 1, 1, 0.6), 2.0)
 
+## Leş bildirimleri: sağda liderler tablosunun altında, sağa yaslı. Öldüren ve ölen kendi renginde;
+## seni ilgilendirenler (sen öldürdün / seni öldürdüler) renkli çerçeveyle öne çıkar. Yeni gelen kayarak girer.
 func _draw_kill_feed(s: Vector2) -> void:
-	var y := 92.0
+	var y := 14.0 + 40.0 + 5 * 27.0 + 12.0
+	var right := s.x - 16.0
 	var now: float = main.round_time
+	var shown := 0
 	for e in main.kill_feed:
 		var age := now - float(e["time"])
-		if age > 5.0:
+		if age > 5.0 or shown >= 4:
 			continue
+		shown += 1
 		var a := clampf((5.0 - age) * 2.0, 0.0, 1.0)
+		var slide := maxf(0.0, 0.18 - age) / 0.18 * 60.0
 		var killer: String = e["killer"]
 		var victim: String = e["victim"]
 		var kw := font.get_string_size(killer, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 		var vw := font.get_string_size(victim, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-		var w := kw + vw + 64.0
-		var x := s.x / 2.0 - w / 2.0
-		var bg := Color(0.5, 0.1, 0.1, 0.6 * a) if e["mine"] else Color(0, 0, 0, 0.45 * a)
-		_panel(Rect2(x, y, w, 28), bg, Color(0, 0, 0, 0), 14)
+		var w := kw + vw + 70.0
+		var x := right - w + slide
+		var mine: bool = e["mine"]
 		var kc: Color = e["killer_col"]
 		var vc: Color = e["victim_col"]
-		_text(Vector2(x + 14, y + 20), killer, 16, Color(kc.lightened(0.3), a))
-		KnifeArt.draw(cv, Vector2(x + 14 + kw + 18, y + 14), PI / 2.0, 0.75)
-		_text(Vector2(x + kw + 50, y + 20), victim, 16, Color(vc.lightened(0.3), a))
-		y += 33.0
+		_panel(Rect2(x, y, w, 30), Color(0.04, 0.06, 0.09, 0.78 * a), Color(GOLD, 0.8 * a) if mine else Color(1, 1, 1, 0.08 * a), 15, 2 if mine else 1)
+		GameData.disc(cv, Vector2(x + 12, y + 15), 4.0, Color(kc, a))
+		_text(Vector2(x + 22, y + 21), killer, 16, Color(kc.lightened(0.35), a))
+		KnifeArt.draw(cv, Vector2(x + 22 + kw + 16, y + 15), PI / 2.0, 0.75, 0, false)
+		_skull(Vector2(x + 22 + kw + 32, y + 13), 5.0, Color(1, 1, 1, 0.8 * a))
+		_text(Vector2(x + kw + 64, y + 21), victim, 16, Color(vc.lightened(0.35), a * 0.85))
+		y += 35.0
 
 
 ## Bekleme süresi göstergesi: kalan oran kadar kararan pasta dilimi (saat yönünde açılır).

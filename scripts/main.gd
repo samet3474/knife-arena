@@ -68,6 +68,7 @@ const POWERUP_TYPES := ["speed", "shield", "heal", "magnet", "knives", "bomb", "
 var fighters: Array[Fighter] = []
 var fighter_by_id := {}
 var next_net_id := 1
+var next_color := 0 # sıradaki oyuncu rengi (herkes farklı renkte)
 var player: Fighter = null
 var pickups: Array[Dictionary] = []
 var powerups: Array[Dictionary] = []
@@ -135,6 +136,7 @@ var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
 var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
 const NET_VERSION := 5
+var host_override := "" # yalnızca test: --host=<adres> (kaydedilmez)
 var test_move := false # test: karakter kendiliğinden yürür, konum ve görüntü sayısı yazılır
 var test_snaps := 0
 var test_timer := 0.0
@@ -171,9 +173,25 @@ var hud # hud.gd örneği
 var sfx # sfx.gd örneği
 
 
+## Emoji ve özel karakterler (★ ♥ ツ gibi) için yedek yazı tipleri: varsayılan yazı tipinde olmayan
+## karakterler bunlardan çizilir (sohbet, oyuncu isimleri, her yer).
+func _setup_fonts() -> void:
+	var base := ThemeDB.fallback_font
+	if base == null:
+		return
+	var extra: Array[Font] = []
+	for path in ["res://assets/fonts/NotoEmoji.ttf", "res://assets/fonts/NotoSansSymbols2.ttf"]:
+		if ResourceLoader.exists(path):
+			extra.append(load(path))
+	if not extra.is_empty():
+		base.fallbacks = extra
+
+
 func _ready() -> void:
 	randomize()
 	var args := OS.get_cmdline_user_args()
+	if not "--server" in args:
+		_setup_fonts()
 	# Web sürümünde test seçenekleri adres çubuğundan verilebilir: ?autostart&lowfx
 	if OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("window.location.search", true)
@@ -273,7 +291,7 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--lb-mode="):
 			hud.lb_mode = a.trim_prefix("--lb-mode=")
 		if a.begins_with("--host="):
-			save["mp_host"] = a.trim_prefix("--host=")
+			host_override = a.trim_prefix("--host=")
 	test_move = "--test-move" in args
 	if "--press-buttons" in args:
 		get_tree().create_timer(3.0).timeout.connect(func() -> void:
@@ -339,6 +357,8 @@ func _load_save() -> void:
 		return
 	for k in save.keys():
 		save[k] = cfg.get_value("player", k, save[k])
+	# Eski sürümlerde test için kaydedilen sunucu adresi artık kullanılmaz (her zaman internetteki sunucu)
+	save["mp_host"] = ""
 	# Eski kayıt: mod ayrımı yokken toplanan leş/galibiyetler tek oyunculuya sayılır
 	if not cfg.has_section_key("player", "sp_kills"):
 		save["sp_kills"] = int(save["total_kills"])
@@ -845,7 +865,8 @@ func _spawn_fighter(fname: String, skin_id: String, col: Color, is_player: bool)
 	next_net_id += 1
 	f.display_name = fname
 	f.skin_id = skin_id
-	f.color = col
+	f.color = GameData.PLAYER_COLORS[next_color % GameData.PLAYER_COLORS.size()]
+	next_color += 1
 	f.is_player = is_player
 	f.knives = START_KNIVES
 	f.face_dir = int(GameData.SKINS[GameData.skin_index(skin_id)]["face"])
@@ -2949,8 +2970,8 @@ func _mp_host() -> String:
 			if local or _public_server() == "":
 				return h
 		return _public_server()
-	if String(save["mp_host"]) != "":
-		return String(save["mp_host"])
+	if host_override != "":
+		return host_override
 	return _public_server() if _public_server() != "" else "127.0.0.1"
 
 
@@ -3420,7 +3441,7 @@ func human_count() -> int:
 ## Liderler: bıçak sayısına, eşitlikte leşe göre sıralı canlı savaşçılar.
 func leaderboard(n: int) -> Array[Fighter]:
 	var list := _alive_fighters()
-	list.sort_custom(func(a: Fighter, b: Fighter) -> bool: return a.knives > b.knives)
+	list.sort_custom(func(a: Fighter, b: Fighter) -> bool: return a.kills > b.kills or (a.kills == b.kills and a.knives > b.knives))
 	return list.slice(0, n)
 
 

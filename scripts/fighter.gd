@@ -417,7 +417,7 @@ func _draw_overlay_body() -> void:
 		return
 	var font := ThemeDB.fallback_font
 	var top := -ring_radius() - 30.0 if knives > 0 else -body_r() * 2.0 - 56.0
-	var name_col := Color(1, 0.92, 0.3) if is_player else (Color(1, 0.35, 0.3) if boss else Color.WHITE)
+	var name_col := Color(1, 0.35, 0.3) if boss else color.lightened(0.35)
 	overlay.draw_string_outline(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, 5, Color(0, 0, 0, 0.75))
 	overlay.draw_string(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, name_col)
 	# Seviye rozeti (ismin solunda)
@@ -426,13 +426,7 @@ func _draw_overlay_body() -> void:
 	GameData.disc(overlay, badge, 11.0, Color(1, 0.85, 0.3))
 	GameData.disc(overlay, badge, 9.0, Color(0.1, 0.12, 0.2))
 	overlay.draw_string(font, badge + Vector2(-10, 5), str(level), HORIZONTAL_ALIGNMENT_CENTER, 20, 12, Color.WHITE)
-	# Bıçak sayısı (Knife.io'daki gibi ismin üstünde)
-	var count := str(knives)
-	var cw := font.get_string_size(count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
-	var cx := -(cw + 16.0) / 2.0
-	overlay.draw_string_outline(font, Vector2(cx, top - 20), count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, 5, Color(0, 0, 0, 0.75))
-	overlay.draw_string(font, Vector2(cx, top - 20), count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color.WHITE)
-	KnifeArt.draw(overlay, Vector2(cx + cw + 9, top - 26), 0.35, 0.42, knife_kind, false)
+
 	var ratio := clampf(hp / max_hp, 0.0, 1.0)
 	overlay.draw_rect(Rect2(-29, top + 5, 58, 8), Color(0, 0, 0, 0.6))
 	overlay.draw_rect(Rect2(-28, top + 6, 56 * ratio, 6), Color(1, 0.25, 0.2).lerp(Color(0.3, 0.95, 0.4), ratio))
