@@ -6,3 +6,8 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     autoDeploy: true
+    envVars:
+      # Oyun içindeki "Yönetici" girişinin şifresi. Render rastgele üretir;
+      # Dashboard > knife-arena-server > Environment sayfasında görülür/değiştirilir.
+      - key: ADMIN_PASSWORD
+        generateValue: true

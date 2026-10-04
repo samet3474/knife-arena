@@ -110,6 +110,30 @@ func s_snapshot(data: Dictionary) -> void:
 	main.client_snapshot(data)
 
 
+## Yönetici girişi: şifre sunucudaki ADMIN_PASSWORD ortam değişkeniyle karşılaştırılır.
+@rpc("any_peer", "reliable")
+func c_admin_login(password: String) -> void:
+	if multiplayer.is_server():
+		main.server_admin_login(multiplayer.get_remote_sender_id(), password)
+
+
+@rpc("any_peer", "reliable")
+func c_admin_cmd(id: String) -> void:
+	if multiplayer.is_server():
+		main.server_admin_cmd(multiplayer.get_remote_sender_id(), id)
+
+
+@rpc("authority", "reliable")
+func s_admin_result(ok: bool) -> void:
+	main.client_admin_result(ok)
+
+
+## Yönetim paneli verisi (oyuncular, günlük, botlar); yalnızca girişli yöneticilere gider.
+@rpc("authority", "reliable")
+func s_admin_state(data: Dictionary) -> void:
+	main.client_admin_state(data)
+
+
 ## Yönetim panelinden oyuncuya altın/seviye hediyesi (oyuncunun kendi kaydına yazılır).
 @rpc("authority", "reliable")
 func s_grant(coins: int, levels: int) -> void:

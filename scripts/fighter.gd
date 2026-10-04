@@ -275,7 +275,7 @@ func _draw_knives(front: bool, ci: CanvasItem) -> void:
 		if not low_fx:
 			ci.draw_arc(Vector2.ZERO, r, a - 0.45, a - 0.15, 6, Color(trail, trail.a * 0.5), 5.0)
 			ci.draw_arc(Vector2.ZERO, r, a - 0.2, a, 4, trail, 9.0)
-		KnifeArt.draw(ci, Vector2.from_angle(a) * r, a + PI / 2.0, 1.0, knife_kind, not low_fx)
+		KnifeArt.draw(ci, Vector2.from_angle(a) * r, a + PI / 2.0, 1.0, knife_kind)
 
 
 func _draw() -> void:
@@ -323,8 +323,7 @@ func _draw_body() -> void:
 			draw_arc(Vector2.ZERO, ring_radius(), 0.0, TAU, 64, Color(1, 1, 1, 0.06), 2.0)
 		# Telefonda bıçak başına parlama yerine tek bir renkli halka (çok daha ucuz)
 		var glow: Color = GameData.KNIVES[knife_kind]["glow"]
-		if low_fx and glow.a > 0.0:
-			draw_arc(Vector2.ZERO, ring_radius(), 0.0, TAU, 48, Color(glow, 0.3), 14.0)
+
 		_draw_knives(false, self)
 
 

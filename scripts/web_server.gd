@@ -26,7 +26,7 @@ const HEAD_INJECT := """
 <script>
 (function () {
 	var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
-	var cap = Math.min(window.devicePixelRatio || 1, touch ? 1.25 : 1.5);
+	var cap = Math.min(window.devicePixelRatio || 1, touch ? 2.0 : 2.0);
 	try { Object.defineProperty(window, 'devicePixelRatio', { get: function () { return cap; } }); } catch (e) {}
 })();
 </script>

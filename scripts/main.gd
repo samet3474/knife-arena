@@ -103,6 +103,10 @@ var bot_target := MP_MIN_FIGHTERS - 1
 var server_log: Array[Dictionary] = []
 var peer_info := {} # bağlantı → {"name", "ip", "since", "info"}
 var total_joins := 0
+var admin_peers := {} # sunucu: girişli yönetici bağlantıları
+var admin_timer := 0.0
+var admin_view := {} # istemci: sunucudan gelen panel verisi
+var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
 ## Telefonda (özellikle tarayıcıda) efekt yoğunluğu ve zemin detayı azaltılır.
 var low_fx := false
 ## Kameranın gördüğü dünya alanı; dışındaki nesneler çizilmez.
@@ -240,6 +244,9 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		d.knives = 8
 	if "--mp" in args:
 		on_button("mp")
+	for a in args:
+		if a.begins_with("--admin-login="):
+			admin_connect(a.trim_prefix("--admin-login="))
 	_screenshot_from_args(args)
 
 
@@ -508,9 +515,15 @@ func on_button(id: String) -> void:
 			_write_save()
 		"fullscreen":
 			_toggle_fullscreen()
+		"admin_open":
+			state = "admin_login"
 		_ when id.begins_with("adm_") and net_mode == "server":
 			_admin(id)
 			hud.queue_redraw()
+			return
+		_ when id.begins_with("adm_") and state == "admin":
+			net.c_admin_cmd.rpc_id(1, id)
+			sfx.play("click", 0.0, 0.0)
 			return
 		"pause":
 			if state == "playing" and net_mode == "":
@@ -1147,7 +1160,7 @@ func _knife_fx(f: Fighter, delta: float) -> void:
 	if f.knives <= 0 or f.concealed or not _near_camera(f.position):
 		return
 	var fx_kind: String = GameData.KNIVES[f.knife_kind]["fx"]
-	if fx_kind == "" or randf() > delta * (4.0 + f.knives * 0.3) * (0.35 if low_fx else 1.0):
+	if fx_kind == "" or randf() > delta * (4.0 + f.knives * 0.3) * (0.6 if low_fx else 1.0):
 		return
 	var pos := f.knife_world_pos(randi() % f.knives)
 	_fx_knife_particle(fx_kind, pos, f.knife_kind)
@@ -1745,6 +1758,13 @@ func _server_process(delta: float) -> void:
 		extra.alive = false
 		extra.visible = false
 		dead_since[extra.net_id] = round_time
+	# Girişli yöneticilere panel verisi (saniyede 2 kez)
+	admin_timer -= delta
+	if admin_timer <= 0.0 and not admin_peers.is_empty():
+		admin_timer = 0.5
+		var view := admin_data()
+		for ap in admin_peers.keys():
+			net.s_admin_state.rpc_id(ap, view)
 	snapshot_timer += delta
 	if snapshot_timer >= 1.0 / SNAPSHOT_RATE:
 		snapshot_timer = 0.0
@@ -1805,6 +1825,9 @@ func server_dash(peer: int) -> void:
 
 
 func server_remove_peer(peer: int) -> void:
+	if admin_peers.has(peer):
+		admin_peers.erase(peer)
+		slog("Yönetici ayrıldı", Color(0.8, 0.8, 1))
 	var f := _fid(peers.get(peer, 0))
 	if f != null and f.alive:
 		f.alive = false
@@ -1960,7 +1983,11 @@ func _join_info() -> Dictionary:
 
 
 func _on_net_connected() -> void:
-	if net_mode == "client":
+	if net_mode != "client":
+		return
+	if admin_pending != "":
+		net.c_admin_login.rpc_id(1, admin_pending)
+	else:
 		net.c_join.rpc_id(1, _join_info())
 
 
@@ -1973,6 +2000,8 @@ func _on_net_failed() -> void:
 
 
 func _leave_multiplayer() -> void:
+	admin_pending = ""
+	admin_view = {}
 	if net_mode == "client":
 		net.close()
 	net_mode = ""
@@ -2017,7 +2046,7 @@ func client_grant(coins: int, levels: int) -> void:
 
 
 func client_snapshot(d: Dictionary) -> void:
-	if net_mode != "client":
+	if net_mode != "client" or state == "admin" or state == "admin_wait":
 		return
 	var _pt := Time.get_ticks_usec()
 	_client_snapshot_body(d)
@@ -2119,7 +2148,7 @@ func _client_process_body(delta: float) -> void:
 	delta = minf(delta, 0.05)
 	round_time += delta
 	state_time += delta
-	if state == "connecting" and state_time > CONNECT_TIMEOUT and my_net_id == 0:
+	if (state == "connecting" or state == "admin_wait") and state_time > CONNECT_TIMEOUT and my_net_id == 0:
 		_on_net_failed()
 		return
 	# Girdiyi sunucuya gönder
@@ -2209,7 +2238,7 @@ func zone_status() -> String:
 # --- Ses, kamera ve efektler ---------------------------------------------------
 
 func in_menu() -> bool:
-	return state == "menu" or state == "splash"
+	return state == "menu" or state == "splash" or state == "admin_login"
 
 
 ## Sesi kameraya uzaklığına göre kısarak çalar; oyuncuyla ilgili sesler her zaman duyulur.
@@ -2294,7 +2323,7 @@ func _fx_sparks(pos: Vector2, col: Color, count: int, speed: float, width: float
 	if net_mode == "server":
 		return
 	if low_fx:
-		count = ceili(count * 0.4)
+		count = ceili(count * 0.7)
 	for i in count:
 		var a := dir.angle() + randf_range(-0.9, 0.9) if dir != Vector2.ZERO else randf() * TAU
 		var life := randf_range(0.18, 0.4)
@@ -2312,7 +2341,7 @@ func _fx_smoke(pos: Vector2, count: int, col: Color) -> void:
 	if net_mode == "server":
 		return
 	if low_fx:
-		count = ceili(count * 0.35)
+		count = ceili(count * 0.6)
 	for i in count:
 		var life := randf_range(0.5, 0.9)
 		particles.append({"kind": "smoke", "pos": pos + _random_point(14.0),
@@ -2321,7 +2350,7 @@ func _fx_smoke(pos: Vector2, count: int, col: Color) -> void:
 
 
 func _fx_dust(pos: Vector2) -> void:
-	if net_mode == "server" or (low_fx and randf() < 0.6):
+	if net_mode == "server" or (low_fx and randf() < 0.3):
 		return
 	var life := randf_range(0.35, 0.55)
 	particles.append({"kind": "dust", "pos": pos, "vel": Vector2(randf_range(-20, 20), randf_range(-25, -5)),
@@ -2686,3 +2715,77 @@ func _draw_fx_body() -> void:
 				fx.draw_string_outline(font, Vector2(-100, 0), p["text"], HORIZONTAL_ALIGNMENT_CENTER, 200, size, 6, Color(0, 0, 0, c.a * 0.85))
 				fx.draw_string(font, Vector2(-100, 0), p["text"], HORIZONTAL_ALIGNMENT_CENTER, 200, size, c)
 				fx.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+# --- Yönetim paneli (uzaktan) -----------------------------------------------------
+
+## Sunucudaki yönetici şifresi (Render'da ADMIN_PASSWORD ortam değişkeni). Boşsa uzaktan giriş kapalı.
+func _admin_password() -> String:
+	return OS.get_environment("ADMIN_PASSWORD")
+
+
+func server_admin_login(peer: int, password: String) -> void:
+	var ok := _admin_password() != "" and password == _admin_password()
+	if ok:
+		admin_peers[peer] = true
+		admin_timer = 0.0
+		slog("Yönetici girişi (%s)" % net.peer_ip(peer), Color(1, 0.85, 0.3))
+	else:
+		slog("Hatalı yönetici şifresi denemesi (%s)" % net.peer_ip(peer), Color(1, 0.4, 0.35))
+	net.s_admin_result.rpc_id(peer, ok)
+
+
+func server_admin_cmd(peer: int, id: String) -> void:
+	if admin_peers.has(peer) and id.begins_with("adm_"):
+		_admin(id)
+		admin_timer = 0.0
+
+
+## Yönetim panelinin gösterdiği veriler (sunucu penceresi ve uzaktaki yönetici aynı veriyi kullanır).
+func admin_data() -> Dictionary:
+	if net_mode == "client":
+		return admin_view
+	var bots := 0
+	for f in fighters:
+		if f.alive and f.peer_id == 0:
+			bots += 1
+	var players := []
+	var now := Time.get_ticks_msec()
+	for peer in peer_info.keys():
+		var info: Dictionary = peer_info[peer]
+		var f := _fid(peers.get(peer, 0))
+		players.append({
+			"peer": peer, "name": info["name"], "ip": info["ip"], "since": (now - int(info["since"])) / 1000,
+			"skin": f.skin_id if f != null else "", "level": f.level if f != null else 1,
+			"kills": f.kills if f != null else 0, "knives": f.knives if f != null else 0, "alive": f != null and f.alive,
+		})
+	return {
+		"uptime": now / 1000, "urls": server_urls, "players": players, "bots": bots, "bot_target": bot_target,
+		"alive": alive_count(), "joins": total_joins, "admins": admin_peers.size(), "log": server_log.slice(0, 30),
+	}
+
+
+## Menüden yönetici girişi: sunucuya bağlanır, oyuncu olarak değil yönetici olarak giriş yapar.
+func admin_connect(password: String) -> void:
+	admin_pending = password
+	_clear_world()
+	net_mode = "client"
+	state = "admin_wait"
+	state_time = 0.0
+	if net.connect_to(_mp_host()) != OK:
+		_on_net_failed()
+
+
+func client_admin_result(ok: bool) -> void:
+	admin_pending = ""
+	if ok:
+		state = "admin"
+		sfx.play("unlock", 0.0, 0.0)
+	else:
+		_leave_multiplayer()
+		_start_round(false)
+		hud.flash_banner(Loc.t("wrong_password"), Color(1, 0.4, 0.35), 3.0)
+
+
+func client_admin_state(data: Dictionary) -> void:
+	admin_view = data
