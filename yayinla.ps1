@@ -44,9 +44,8 @@ New-Item -ItemType Directory -Force "$proj\server" | Out-Null
 & $godot --headless --path $proj --export-pack "Linux Server" "$proj\server\knife_arena.pck" 2>&1 | Out-Null
 
 Write-Host "GitHub'a gönderiliyor..."
-Push-Location $proj
-git add -A
-git commit -m ("Yayın " + (Get-Date -Format "yyyy-MM-dd HH:mm")) | Out-Null
-git push
-Pop-Location
+$git = "C:\Program Files\Git\cmd\git.exe"
+& $git -C $proj add -A
+& $git -C $proj commit -q -m ("Yayın " + (Get-Date -Format "yyyy-MM-dd HH:mm"))
+& $git -C $proj push -u origin main
 Write-Host "Tamam. GitHub Pages ve Render birkaç dakika içinde güncellenir."
