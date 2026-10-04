@@ -1,0 +1,4 @@
+﻿Ses kaynakları (hepsi CC0 / kamu malı):
+- Kenney (kenney.nl): Impact Sounds, Interface Sounds, RPG Audio, Music Jingles, UI Audio
+- StarNinjas, "20 Sword Sound Effects (Attacks and Clashes)" - opengameart.org/content/20-sword-sound-effects-attacks-and-clashes
+- artisticdude, "Swishes Sound Pack" - opengameart.org/content/swishes-sound-pack

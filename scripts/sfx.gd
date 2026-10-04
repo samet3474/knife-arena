@@ -3,13 +3,13 @@ extends Node
 ## Aynı sesin birden çok varyasyonu varsa rastgele biri çalınır.
 
 const SOUND_DIR := "res://assets/sounds/"
-const VARIANTS := {"throw": 2, "pickup": 3, "step": 4, "clash": 5, "hit": 5, "death": 5, "block": 5, "coin": 2}
+const VARIANTS := {"throw": 4, "pickup": 3, "step": 4, "clash": 5, "hit": 5, "death": 5, "block": 4, "coin": 2}
 const SINGLES := ["click", "select", "error", "powerup", "kill", "zone", "win", "lose", "unlock", "buy"]
 ## Seslerin temel ses seviyeleri (dB); dosyalar arasındaki farkı dengeler.
 ## Sık çalan sesler (adım, bıçak çarpışması, toplama) kulağı yormasın diye kısık.
-const BASE_DB := {"pickup": -17.0, "step": -21.0, "throw": -8.0, "clash": -11.0, "block": -10.0, "hit": -5.0,
-	"death": -3.0, "click": -8.0, "select": -8.0, "powerup": -5.0, "kill": -3.0, "zone": -4.0, "coin": -6.0,
-	"win": -2.0, "lose": -4.0, "unlock": -3.0, "buy": -4.0, "error": -8.0}
+const BASE_DB := {"pickup": -17.0, "step": -21.0, "throw": -9.0, "clash": -13.0, "block": -11.0, "hit": -7.0,
+	"death": -5.0, "click": -7.0, "select": -9.0, "powerup": -5.0, "kill": -4.0, "zone": -4.0, "coin": -6.0,
+	"win": -3.0, "lose": -5.0, "unlock": -3.0, "buy": -4.0, "error": -8.0}
 ## Aynı sesin tekrar çalınabilmesi için gereken süre (ms): üst üste binen sesler cızırtı gibi duyulur.
 const MIN_GAP := {"clash": 90, "pickup": 70, "step": 120, "hit": 60, "block": 90, "coin": 60}
 ## Aynı anda en fazla kaç kopyası çalabilir.
@@ -31,14 +31,23 @@ func _ready() -> void:
 	for sound in VARIANTS:
 		var list: Array[AudioStream] = []
 		for i in VARIANTS[sound]:
-			var path := SOUND_DIR + "%s_%d.ogg" % [sound, i + 1]
-			if ResourceLoader.exists(path):
-				list.append(load(path))
+			var s := _load_sound("%s_%d" % [sound, i + 1])
+			if s != null:
+				list.append(s)
 		streams[sound] = list
 	for sound in SINGLES:
-		var path: String = SOUND_DIR + sound + ".ogg"
+		var s := _load_sound(sound)
+		if s != null:
+			streams[sound] = [s]
+
+
+## Ses dosyasını .ogg ya da .wav olarak yükler (hangisi varsa).
+func _load_sound(base: String) -> AudioStream:
+	for ext in [".ogg", ".wav"]:
+		var path: String = SOUND_DIR + base + ext
 		if ResourceLoader.exists(path):
-			streams[sound] = [load(path)]
+			return load(path)
+	return null
 
 
 func play(sound: String, volume_db := 0.0, pitch_var := 0.05) -> void:
