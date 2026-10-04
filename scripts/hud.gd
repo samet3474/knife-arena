@@ -22,6 +22,11 @@ var joy_origin := Vector2.ZERO
 var joy_pos := Vector2.ZERO
 var throw_index := -1
 var throw_pos := Vector2.ZERO # FIRLAT tuşuna basan parmağın son konumu
+var _throw_was_cooling := false
+var _throw_ready_at := -10.0
+var _dash_was_cooling := false
+var _dash_ready_at := -10.0
+var _dash_pressed_at := -10.0
 var buttons: Array[Dictionary] = []
 var font: Font
 var page := -1
@@ -1973,6 +1978,29 @@ func _draw_kill_feed(s: Vector2) -> void:
 		y += 33.0
 
 
+## Bekleme süresi göstergesi: kalan oran kadar kararan pasta dilimi (saat yönünde açılır).
+func _pie(c: Vector2, r: float, ratio: float, col: Color) -> void:
+	var pts := PackedVector2Array([c])
+	var steps := maxi(3, int(32 * ratio))
+	var start := -PI / 2 + TAU * (1.0 - ratio)
+	for i in steps + 1:
+		pts.append(c + Vector2.from_angle(start + TAU * ratio * i / steps) * r)
+	cv.draw_colored_polygon(pts, col)
+
+
+## Düğme yeniden hazır olduğunda kısa bir parlama halkası.
+func _ready_flash(c: Vector2, r: float, age: float) -> void:
+	if age < 0.0 or age > 0.35:
+		return
+	var a := 1.0 - age / 0.35
+	cv.draw_arc(c, r + age * 60.0, 0.0, TAU, 40, Color(1, 1, 1, 0.8 * a), 4.0)
+
+
+## ATIL düğmesine basıldı (basılma efekti için).
+func on_dash_pressed() -> void:
+	_dash_pressed_at = Time.get_ticks_msec() / 1000.0
+
+
 func _draw_controls(s: Vector2) -> void:
 	var base := joy_origin if joy_index >= 0 else _joy_rest()
 	var alpha := 1.0 if joy_index >= 0 else 0.55
@@ -1992,39 +2020,63 @@ func _draw_controls(s: Vector2) -> void:
 	cv.draw_arc(knob, JOY_KNOB, 0.0, TAU, 32, Color(1, 1, 1, 0.8 * alpha), 2.0)
 
 	var p: Fighter = main.player
+	var now := Time.get_ticks_msec() / 1000.0
+	# --- FIRLAT: basılınca küçülür; bekleme süresinde üstüne kararan dilim gelir, bitince parlar ---
 	var c := _throw_center()
 	var ready: bool = p.knives > 0 or p.bombs > 0
-	var col := Color(0.95, 0.3, 0.25, 0.85 if throw_held() else 0.65) if ready else Color(0.5, 0.5, 0.5, 0.4)
-	var press := 4.0 if throw_held() else 0.0
-	GameData.disc(cv, c + Vector2(0, 6), THROW_RADIUS, Color(0, 0, 0, 0.25))
-	GameData.disc(cv, c + Vector2(0, press), THROW_RADIUS, col)
-	cv.draw_arc(c + Vector2(0, press), THROW_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.6), 3.0)
-	if p.throw_cooldown > 0.0:
-		cv.draw_arc(c + Vector2(0, press), THROW_RADIUS - 8.0, -PI / 2,
-			-PI / 2 + TAU * (1.0 - p.throw_cooldown / 0.35), 40, Color(1, 1, 1, 0.8), 5.0)
+	var cd_ratio := clampf(p.throw_cooldown / (main.THROW_COOLDOWN * (2.0 if p.bombs > 0 else 1.0)), 0.0, 1.0)
+	if cd_ratio <= 0.0 and _throw_was_cooling:
+		_throw_ready_at = now
+	_throw_was_cooling = cd_ratio > 0.0
+	var held := throw_held()
+	var tr := THROW_RADIUS * (0.92 if held else 1.0)
+	var col := Color(0.95, 0.3, 0.25, 0.9 if held else 0.7) if ready else Color(0.5, 0.5, 0.5, 0.45)
+	GameData.disc(cv, c + Vector2(0, 6), tr, Color(0, 0, 0, 0.25))
+	GameData.disc(cv, c, tr, col)
+	if held:
+		GameData.disc(cv, c, tr * 0.8, Color(1, 1, 1, 0.12))
+	cv.draw_arc(c, tr, 0.0, TAU, 48, Color(1, 1, 1, 0.65), 3.0)
 	# Hedef kilitliyse buton nabız gibi atar
-	if main.player_target != null and ready:
-		var pulse := fmod(Time.get_ticks_msec() / 700.0, 1.0)
-		cv.draw_arc(c + Vector2(0, press), THROW_RADIUS + pulse * 22.0, 0.0, TAU, 48, Color(1, 0.3, 0.25, 1.0 - pulse), 4.0)
+	if main.player_target != null and ready and cd_ratio <= 0.0:
+		var pulse := fmod(now / 0.7, 1.0)
+		cv.draw_arc(c, tr + pulse * 22.0, 0.0, TAU, 48, Color(1, 0.3, 0.25, 1.0 - pulse), 4.0)
 	if p.bombs > 0:
 		# Elde bomba varsa bir sonraki atış bomba: butonda bomba ve sayısı
-		main._draw_bomb(cv, c + Vector2(0, press - 6), 1.3, Time.get_ticks_msec() / 1000.0)
-		_text(Vector2(c.x + 18, c.y + press - 30), "x%d" % p.bombs, 20, Color(1, 0.85, 0.4))
+		main._draw_bomb(cv, c + Vector2(0, -6), 1.3, now)
+		_text(Vector2(c.x + 18, c.y - 30), "x%d" % p.bombs, 20, Color(1, 0.85, 0.4))
 	else:
-		KnifeArt.draw(cv, c + Vector2(0, press - 8), PI / 4.0, 2.0, p.knife_kind)
-	_text(Vector2(c.x - 60, c.y + press + 50), Loc.t("throw"), 18, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120.0)
+		KnifeArt.draw(cv, c + Vector2(0, -8), PI / 4.0, 2.0, p.knife_kind)
+	_text(Vector2(c.x - 60, c.y + 50), Loc.t("throw"), 18, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120.0)
+	if cd_ratio > 0.0:
+		_pie(c, tr, cd_ratio, Color(0, 0, 0, 0.45))
+		cv.draw_arc(c, tr - 5.0, -PI / 2, -PI / 2 + TAU * (1.0 - cd_ratio), 40, Color(1, 1, 1, 0.9), 5.0)
+	_ready_flash(c, tr, now - _throw_ready_at)
+	# Kalan bıçak sayısı rozeti (bıçak bitince kırmızı)
+	var kb := c + Vector2(tr * 0.68, -tr * 0.68)
+	GameData.disc(cv, kb, 20.0, Color(0.1, 0.12, 0.16, 0.95))
+	cv.draw_arc(kb, 20.0, 0.0, TAU, 24, Color(1, 0.4, 0.35) if p.knives <= 0 else GOLD, 2.0)
+	_text(Vector2(kb.x - 20, kb.y + 7), str(p.knives), 18, Color(1, 0.45, 0.4) if p.knives <= 0 else Color.WHITE,
+		HORIZONTAL_ALIGNMENT_CENTER, 40.0)
 
-	# Atılma (dash) butonu: bekleme süresi dolana kadar gri, dolunca parlar
+	# --- ATIL: bekleme süresinde kararan dilim ve kalan saniye; hazır olunca parlar ---
 	var d := _dash_center()
-	var dash_ready := p.dash_cd <= 0.0
-	GameData.disc(cv, d + Vector2(0, 5), DASH_RADIUS, Color(0, 0, 0, 0.25))
-	GameData.disc(cv, d, DASH_RADIUS, Color(0.25, 0.55, 0.95, 0.7) if dash_ready else Color(0.3, 0.33, 0.4, 0.55))
-	cv.draw_arc(d, DASH_RADIUS, 0.0, TAU, 40, Color(1, 1, 1, 0.6), 2.5)
-	if not dash_ready:
-		cv.draw_arc(d, DASH_RADIUS - 6.0, -PI / 2, -PI / 2 + TAU * (1.0 - p.dash_cd / Fighter.DASH_COOLDOWN), 32,
-			Color(1, 1, 1, 0.85), 4.0)
+	var dash_ratio := clampf(p.dash_cd / Fighter.DASH_COOLDOWN, 0.0, 1.0)
+	if dash_ratio <= 0.0 and _dash_was_cooling:
+		_dash_ready_at = now
+	_dash_was_cooling = dash_ratio > 0.0
+	var dr := DASH_RADIUS * (0.9 if now - _dash_pressed_at < 0.12 else 1.0)
+	GameData.disc(cv, d + Vector2(0, 5), dr, Color(0, 0, 0, 0.25))
+	GameData.disc(cv, d, dr, Color(0.25, 0.55, 0.95, 0.8) if dash_ratio <= 0.0 else Color(0.25, 0.3, 0.4, 0.6))
+	cv.draw_arc(d, dr, 0.0, TAU, 40, Color(1, 1, 1, 0.6), 2.5)
 	for k in 3:
 		var off := Vector2(-12 + k * 10, -6)
 		cv.draw_polyline(PackedVector2Array([d + off + Vector2(-5, -7), d + off + Vector2(3, 0), d + off + Vector2(-5, 7)]),
-			Color(1, 1, 1, 0.5 + k * 0.25), 3.5)
-	_text(Vector2(d.x - 50, d.y + 24), Loc.t("dash"), 14, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 100.0)
+			Color(1, 1, 1, (0.5 + k * 0.25) * (1.0 if dash_ratio <= 0.0 else 0.4)), 3.5)
+	if dash_ratio > 0.0:
+		_pie(d, dr, dash_ratio, Color(0, 0, 0, 0.4))
+		cv.draw_arc(d, dr - 4.0, -PI / 2, -PI / 2 + TAU * (1.0 - dash_ratio), 32, Color(1, 1, 1, 0.9), 4.0)
+		_text(Vector2(d.x - 40, d.y + 8), "%.1f" % p.dash_cd, 22, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 80.0)
+	else:
+		_text(Vector2(d.x - 50, d.y + 24), Loc.t("dash"), 14, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 100.0)
+	_ready_flash(d, dr, now - _dash_ready_at)
+

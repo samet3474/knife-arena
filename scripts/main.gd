@@ -42,7 +42,7 @@ const BOSS_KNIVES := 24
 const THROW_SPEED := 1150.0
 const THROW_LIFE := 0.8
 const THROW_DAMAGE := 22.0
-const THROW_COOLDOWN := 0.3
+const THROW_COOLDOWN := 0.35
 const AIM_ASSIST_RANGE := 750.0
 const AIM_ASSIST_ANGLE := 0.6
 const HEARING_RANGE := 1100.0
@@ -273,6 +273,10 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--host="):
 			save["mp_host"] = a.trim_prefix("--host=")
 	test_move = "--test-move" in args
+	if "--press-buttons" in args:
+		get_tree().create_timer(3.0).timeout.connect(func() -> void:
+			player_dash()
+			player_throw())
 	hud.touch_debug = "--dokunma" in args
 	if "--boss-now" in args:
 		next_boss_time = 1.0
@@ -1434,10 +1438,16 @@ func _arena_event() -> void:
 func player_dash() -> void:
 	if state != "playing" or player == null or not player.alive:
 		return
+	Input.vibrate_handheld(15)
 	if net_mode == "client":
+		# Bekleme süresi telefonda hemen görünsün (sunucu cevabı beklenmez)
+		if player.dash_cd <= 0.0:
+			player.dash_cd = Fighter.DASH_COOLDOWN
+			hud.on_dash_pressed()
 		net.c_dash.rpc_id(1)
 		return
 	if player.try_dash():
+		hud.on_dash_pressed()
 		_emit({"t": "dash", "f": player.net_id})
 
 
@@ -1704,9 +1714,25 @@ func _lose_knife(f: Fighter, at: Vector2) -> void:
 
 ## Oyuncunun fırlatma isteği. Çok oyunculuda istek sunucuya girdi olarak gider.
 func player_throw() -> void:
-	if state != "playing" or player == null or not player.alive or net_mode == "client":
+	if state != "playing" or player == null or not player.alive:
+		return
+	Input.vibrate_handheld(10)
+	if net_mode == "client":
+		# Kısa bir dokunuş iki girdi gönderimi arasında kaybolmasın: basıldığı an sunucuya gönder
+		if player.throw_cooldown <= 0.0 and (player.knives > 0 or player.bombs > 0):
+			player.throw_cooldown = THROW_COOLDOWN
+		_send_input(true)
 		return
 	_fighter_throw(player, player_target)
+
+
+## Çok oyunculu: girdiyi sunucuya hemen gönderir (throw_now: fırlatma kesin iletilsin).
+func _send_input(throw_now := false) -> void:
+	if not net.is_online() or player == null or not player.alive or state != "playing":
+		return
+	input_timer = 0.0
+	var target_id := player_target.net_id if player_target != null else 0
+	net.c_input.rpc_id(1, _read_move(), player.facing, throw_now or _throw_pressed(), target_id)
 
 
 ## Hedef verilmişse rakibin hareketini kestirerek ona, yoksa baktığı yöndeki en yakın rakibe fırlatır.
@@ -3283,6 +3309,9 @@ func _client_process_body(delta: float) -> void:
 		input_timer = 0.0
 		var target_id := player_target.net_id if player_target != null else 0
 		net.c_input.rpc_id(1, _read_move(), player.facing, _throw_pressed(), target_id)
+		# Basılı tutarken atış bekleme süresini telefonda da say (görsel)
+		if _throw_pressed() and player.throw_cooldown <= 0.0 and (player.knives > 0 or player.bombs > 0):
+			player.throw_cooldown = THROW_COOLDOWN
 	# Konumları yumuşakça sunucudaki değerlere yaklaştır; animasyonları ilerlet
 	for f in fighters:
 		if not f.alive:

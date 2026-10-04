@@ -228,6 +228,9 @@ func visual_tick(delta: float) -> void:
 	idle_time += delta
 	hurt_flash = maxf(0.0, hurt_flash - delta)
 	squash = move_toward(squash, 0.0, delta * 4.0)
+	# İstemci: bekleme süreleri yalnızca düğmelerde göstermek için yerelde sayılır
+	throw_cooldown = maxf(0.0, throw_cooldown - delta)
+	dash_cd = maxf(0.0, dash_cd - delta)
 	_update_sprite()
 	if on_screen:
 		queue_redraw()
