@@ -36,6 +36,7 @@ var streak := 0 # ölmeden alınan leş sayısı
 var last_kill_time := -99.0
 var multi := 0 # kısa sürede art arda alınan leş sayısı
 var knife_kind := 0
+var accessory := 0 # GameData.ACCESSORIES sırası (seviye eşyası)
 var in_bush := false
 var concealed := false # çalıda ve oyuncuya uzak: ismi gizlenir
 var color := Color.WHITE
@@ -312,6 +313,8 @@ func _draw_body() -> void:
 	GameData.disc(self, Vector2.ZERO, BODY_RADIUS * 1.15, Color(0, 0, 0, 0.3))
 	draw_arc(Vector2.ZERO, BODY_RADIUS * 1.15, 0.0, TAU, 40, Color(color, 0.9), 5.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if accessory > 0 and not concealed:
+		GameData.draw_accessory(self, accessory, Vector2.ZERO, 1.0, idle_time, true)
 
 	if speed_t > 0.0 and moving:
 		for i in 4:
@@ -336,6 +339,8 @@ func _draw_overlay() -> void:
 func _draw_overlay_body() -> void:
 	if not alive:
 		return
+	if accessory > 0 and not concealed:
+		GameData.draw_accessory(overlay, accessory, Vector2.ZERO, 1.0, idle_time, false)
 	if knives > 0:
 		_draw_knives(true, overlay)
 

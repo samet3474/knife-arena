@@ -25,6 +25,7 @@ var tab := "characters" # characters | knives | levels
 var popup := "" # "" | shop | settings (menüde açılır pencere)
 var shop_preview := "" # koleksiyonda önizlenen kartın id'si
 var scoreboard_open := false
+var lb_tab := "k" # ana menü skor tablosu: k (leş) | l (seviye) | c (altın)
 var banner_text := ""
 var banner_time := 0.0
 var banner_color := Color(1, 0.4, 0.35)
@@ -266,6 +267,9 @@ func _on_button(id: String) -> void:
 			pass
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
+		"lb_k", "lb_l", "lb_c":
+			lb_tab = id.trim_prefix("lb_")
+			main.sfx.play("select", 0.0, 0.0)
 		"admin_open":
 			popup = ""
 			main.on_button(id)
@@ -778,7 +782,14 @@ func _draw_showcase(s: Vector2, t: float) -> void:
 	for i in 8:
 		if pos[i].y < kc.y:
 			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
+	var acc: int = main.selected_acc()
+	var acc_sc := 200.0 / 84.0
+	var acc_origin := c + Vector2(0, -12) + Vector2(0, 10) * acc_sc
+	if acc > 0:
+		GameData.draw_accessory(cv, acc, acc_origin, acc_sc, t, true)
 	_draw_skin(sel_id, c + Vector2(0, -12), 200.0, Color.WHITE, 1 + int(t * 10.0) % 8)
+	if acc > 0:
+		GameData.draw_accessory(cv, acc, acc_origin, acc_sc, t, false)
 	for i in 8:
 		if pos[i].y >= kc.y:
 			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
@@ -805,24 +816,96 @@ func _draw_menu_side(s: Vector2) -> void:
 		["shop_levels", Loc.t("tab_levels"), Loc.t("level_short") % int(main.save["level"]), Color(0.32, 0.3, 0.55)],
 	]
 	var y := 120.0
+	var claimable: int = main.quest_claimable_count()
 	for it in items:
 		var r := Rect2(24, y, 230, 64)
 		_button(r, it[0], "", it[3], true, 16)
 		_text(Vector2(r.position.x + 18, r.position.y + 30), it[1], _fit_size(it[1], 19, 150.0), Color.WHITE)
 		_text(Vector2(r.position.x + 18, r.position.y + 52), it[2], 13, Color(1, 1, 1, 0.7))
 		_text(Vector2(r.end.x - 34, r.position.y + 42), ">", 24, Color(1, 1, 1, 0.8))
+		# Alınmayı bekleyen görev ödülü varsa seviye butonunda kırmızı rozet
+		if it[0] == "shop_levels" and claimable > 0:
+			var bc := Vector2(r.end.x - 6, r.position.y + 6)
+			GameData.disc(cv, bc, 13.0, Color(0.9, 0.2, 0.2))
+			_text(bc + Vector2(-13, 6), str(claimable), 15, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 26.0)
 		y += 78.0
-	# Sağ: istatistik kutucukları (dikey)
+	# Sol alt: kısa istatistikler
 	var best := int(main.save["best_rank"])
 	var stats := [[Loc.t("stat_kills"), str(main.save["total_kills"])], [Loc.t("stat_wins"), str(main.save["wins"])],
 		[Loc.t("stat_best"), "#%d" % best if best > 0 else "-"]]
-	y = 120.0
+	y += 4.0
 	for st in stats:
-		var r := Rect2(s.x - 24 - 200, y, 200, 52)
-		_panel(r, PANEL_BG, Color(1, 1, 1, 0.1), 16, 1)
-		_text(Vector2(r.position.x + 16, r.position.y + 32), st[0], 14, Color(1, 1, 1, 0.65))
-		_text(Vector2(r.position.x, r.position.y + 34), st[1], 22, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 16)
-		y += 62.0
+		var r := Rect2(24, y, 230, 40)
+		if r.end.y > s.y - 20.0:
+			break
+		_panel(r, PANEL_BG, Color(1, 1, 1, 0.1), 14, 1)
+		_text(Vector2(r.position.x + 14, r.position.y + 26), st[0], 14, Color(1, 1, 1, 0.65))
+		_text(Vector2(r.position.x, r.position.y + 28), st[1], 20, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14)
+		y += 46.0
+	_draw_leaderboard(Rect2(s.x - 24 - 260, 92, 260, s.y - 92 - 24))
+
+
+## Ana menü skor tablosu: çevrimiçi sunucudan son bağlantıda alınan liste + oyuncunun kendisi.
+func _draw_leaderboard(r: Rect2) -> void:
+	_panel(r, PANEL_BG, Color(GOLD, 0.35), 18, 2)
+	_text(Vector2(r.position.x, r.position.y + 30), Loc.t("lb_title"), 19, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	var tabs := [["k", Loc.t("lb_kills")], ["l", Loc.t("lb_level")], ["c", Loc.t("lb_coins")]]
+	var tw := (r.size.x - 24.0 - 8.0) / 3.0
+	for i in tabs.size():
+		var tr := Rect2(r.position.x + 12 + i * (tw + 4.0), r.position.y + 42, tw, 34)
+		var active: bool = lb_tab == tabs[i][0]
+		_panel(tr, Color(GOLD, 0.22) if active else Color(1, 1, 1, 0.05), GOLD if active else Color(1, 1, 1, 0.1), 10, 2 if active else 1)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 23), tabs[i][1], 14, GOLD if active else Color(1, 1, 1, 0.6), tr.size.x)
+		buttons.append({"rect": tr.grow(4.0), "id": "lb_" + tabs[i][0], "enabled": true})
+	# Satırlar: sunucu listesi + oyuncunun güncel değeri
+	var me := String(main.save["player_name"]).strip_edges()
+	var my_val := int(main.save[{"k": "total_kills", "l": "level", "c": "coins"}[lb_tab]])
+	var top: Dictionary = main.save["top"] if main.save["top"] is Dictionary else {}
+	var rows := []
+	var found := false
+	for row in top.get(lb_tab, []):
+		var n := String(row[0])
+		var v := int(row[1])
+		var mine := me != "" and n.to_lower() == me.to_lower()
+		if mine:
+			found = true
+			v = maxi(v, my_val)
+		rows.append([n, v, mine])
+	if not found:
+		rows.append([me if me != "" else Loc.t("lb_you"), my_val, true])
+	rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
+	var y0 := r.position.y + 86.0
+	var rh := minf(40.0, (r.end.y - y0 - 10.0) / 9.0)
+	var max_rows := int((r.end.y - y0 - 6.0) / rh)
+	var my_rank := 0
+	for i in rows.size():
+		if rows[i][2]:
+			my_rank = i
+	for i in mini(rows.size(), max_rows):
+		var idx := i
+		# Son satır: oyuncu listenin dışında kalıyorsa onu göster
+		if i == max_rows - 1 and my_rank >= max_rows:
+			idx = my_rank
+		var row: Array = rows[idx]
+		var rr := Rect2(r.position.x + 10, y0 + i * rh, r.size.x - 20, rh - 4.0)
+		var mine: bool = row[2]
+		_panel(rr, Color(GOLD, 0.2) if mine else Color(1, 1, 1, 0.04 if i % 2 == 0 else 0.02), Color(GOLD, 0.7) if mine else Color(0, 0, 0, 0), 10, 1 if mine else 0)
+		var medal := [GOLD, Color(0.8, 0.82, 0.88), Color(0.85, 0.55, 0.3)]
+		var rc := rr.position + Vector2(18, rr.size.y / 2.0)
+		if idx < 3:
+			GameData.disc(cv, rc, 11.0, medal[idx])
+		var fs := int(minf(16.0, rh * 0.45))
+		_text(Vector2(rc.x - 14, rc.y + fs * 0.36), str(idx + 1), fs, Color(0.1, 0.1, 0.12) if idx < 3 else Color(1, 1, 1, 0.6),
+			HORIZONTAL_ALIGNMENT_CENTER, 28.0)
+		var val := str(row[1])
+		var vw := font.get_string_size(val, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		_text(Vector2(rr.position.x + 38, rc.y + fs * 0.36), String(row[0]), _fit_size(String(row[0]), fs, rr.size.x - 56.0 - vw),
+			GOLD if mine else Color.WHITE)
+		_text(Vector2(rr.position.x, rc.y + fs * 0.36), val, fs, Color(0.6, 0.85, 1) if lb_tab == "l" else GOLD,
+			HORIZONTAL_ALIGNMENT_RIGHT, rr.size.x - 10.0)
+	if top.is_empty() and rows.size() <= 1:
+		_text(Vector2(r.position.x + 12, y0 + rh * 1.6), Loc.t("lb_empty"), _fit_size(Loc.t("lb_empty"), 14, r.size.x - 24.0),
+			Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 24.0)
 
 
 ## Alt orta: iki büyük mod butonu (başlık + açıklama).
@@ -893,7 +976,9 @@ func _draw_shop(s: Vector2, t: float) -> void:
 
 	var body := Rect2(r.position.x + 22, r.position.y + 76, r.size.x - 44, r.size.y - 96)
 	if tab == "levels":
-		_draw_level_table(body)
+		var lw := minf(440.0, body.size.x * 0.42)
+		_draw_quests_and_items(Rect2(body.position, Vector2(lw, body.size.y)), t)
+		_draw_level_table(Rect2(body.position.x + lw + 16.0, body.position.y, body.size.x - lw - 16.0, body.size.y))
 	else:
 		var pane := Rect2(body.position, Vector2(300, body.size.y))
 		_draw_shop_preview(pane, t)
@@ -929,12 +1014,17 @@ func _draw_shop_preview(r: Rect2, t: float) -> void:
 	_text_fit(Vector2(r.position.x, ny), Loc.t(id + ".name"), 26, Color.WHITE, r.size.x)
 	if tab == "characters":
 		_text_fit(Vector2(r.position.x, ny + 26), Loc.t(id + ".desc"), 14, col.lightened(0.4), r.size.x)
+	elif item.get("female", false):
+		_text_fit(Vector2(r.position.x, ny + 26), Loc.t("female_only"), 14, Color(1, 0.55, 0.8), r.size.x)
 	# Durum ve işlem butonu
 	var owned: bool = main.skin_unlocked(item)
 	var equipped := id == _equipped_id()
 	var br := Rect2(r.position.x + 16, r.end.y - 84, r.size.x - 32, 66)
+	var wrong_skin: bool = tab == "knives" and not main.knife_allowed(GameData.knife_index(id), main.playable_skin()["id"])
 	if equipped:
 		_button(br, "noop", Loc.t("equipped"), Color(0.3, 0.34, 0.4), false, 22)
+	elif owned and wrong_skin:
+		_button(br, "noop", Loc.t("female_need"), Color(0.45, 0.3, 0.42), false, 18)
 	elif owned:
 		_button(br, "shop_use", Loc.t("equip"), Color(0.22, 0.66, 0.33), true, 26)
 	elif not main.level_ok(item):
@@ -1002,6 +1092,10 @@ func _shop_card(r: Rect2, item: Dictionary, selected: bool, equipped: bool, t: f
 	if equipped:
 		_panel(Rect2(r.position.x + 8, r.position.y + 8, 64, 22), Color(0.22, 0.66, 0.33), Color(0, 0, 0, 0), 11)
 		_text(Vector2(r.position.x + 8, r.position.y + 25), Loc.t("in_use"), 12, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 64.0)
+	if item.get("female", false):
+		var fy := r.position.y + (34.0 if equipped else 8.0)
+		_panel(Rect2(r.position.x + 8, fy, 64, 22), Color(0.85, 0.3, 0.6), Color(0, 0, 0, 0), 11)
+		_text(Vector2(r.position.x + 8, fy + 16), Loc.t("female_tag"), 12, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 64.0)
 	_card_footer(r, item, owned, selected)
 	buttons.append({"rect": r, "id": "pick_" + id, "enabled": true})
 
@@ -1026,6 +1120,79 @@ func _card_footer(r: Rect2, item: Dictionary, owned: bool, selected: bool) -> vo
 	_coin_amount(Vector2(bar.position.x + (bar.size.x - w) / 2.0, bar.end.y - 4), price, 14, GOLD if afford else Color(1, 0.5, 0.45))
 
 
+## Seviye sekmesinin sol sütunu: günlük görevler (üstte) ve seviyeyle açılan eşyalar (altta).
+func _draw_quests_and_items(r: Rect2, t: float) -> void:
+	_text(Vector2(r.position.x + 4, r.position.y + 22), Loc.t("daily_quests"), 20, GOLD)
+	_text(Vector2(r.position.x, r.position.y + 20), Loc.t("quests_renew"), 12, Color(1, 1, 1, 0.5),
+		HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 4.0)
+	var ids: Array = main.save["quest_ids"]
+	var y := r.position.y + 34.0
+	var qh := 74.0
+	for i in ids.size():
+		var q := GameData.quest_info(ids[i])
+		var goal := int(q["goal"])
+		var prog := mini(goal, int(main.save["quest_prog"][i]))
+		var claimed: bool = main.save["quest_claimed"][i]
+		var done := prog >= goal
+		var qr := Rect2(r.position.x, y, r.size.x, qh - 8.0)
+		_panel(qr, Color(0.22, 0.6, 0.33, 0.18) if done and not claimed else Color(1, 1, 1, 0.04),
+			Color(0.5, 1, 0.6, 0.7) if done and not claimed else Color(1, 1, 1, 0.08), 12, 2 if done and not claimed else 1)
+		var title: String = Loc.t(q["id"])
+		if title.contains("%d"):
+			title = title % goal
+		var bw := 92.0
+		var tw := qr.size.x - bw - 30.0
+		_text(Vector2(qr.position.x + 14, qr.position.y + 25), title, _fit_size(title, 17, tw),
+			Color(1, 1, 1, 0.5) if claimed else Color.WHITE)
+		# Ödül: altın + XP
+		var cw := _coin_amount(Vector2(qr.position.x + 14, qr.position.y + 50), int(q["coins"]), 15)
+		_text(Vector2(qr.position.x + 26 + cw, qr.position.y + 50), "+%d XP" % int(q["xp"]), 14, Color(0.6, 0.85, 1))
+		var bar := Rect2(qr.position.x + tw - 80.0, qr.position.y + 38, 90.0, 14)
+		_progress_bar(bar, float(prog) / goal, Color(0.5, 1, 0.6) if done else Color(0.45, 0.75, 1))
+		_text(Vector2(bar.position.x, bar.end.y - 2), "%d/%d" % [prog, goal], 11, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, bar.size.x)
+		var br := Rect2(qr.end.x - bw - 10.0, qr.position.y + 11, bw, qr.size.y - 22.0)
+		if claimed:
+			_button(br, "noop", Loc.t("claimed"), Color(0.3, 0.34, 0.4), false, 15)
+		else:
+			_button(br, "quest_%d" % i, Loc.t("claim"), Color(0.22, 0.66, 0.33) if done else Color(0.3, 0.34, 0.4), done, 18)
+		y += qh
+	# Seviye eşyaları: dokununca takılır (seviyesi yetmeyenler kilitli)
+	y += 10.0
+	_text(Vector2(r.position.x + 4, y + 18), Loc.t("level_items"), 20, GOLD)
+	y += 30.0
+	var n := GameData.ACCESSORIES.size()
+	var gap := 8.0
+	var cw2 := (r.size.x - gap * (n - 1)) / n
+	var ch := clampf(r.end.y - y, 60.0, cw2 * 1.9)
+	var cur: int = main.selected_acc()
+	var lvl := int(main.save["level"])
+	for i in n:
+		var it: Dictionary = GameData.ACCESSORIES[i]
+		var cr := Rect2(r.position.x + i * (cw2 + gap), y, cw2, ch)
+		var unlocked := lvl >= int(it["level"])
+		var sel := i == cur
+		_panel(cr, Color(GOLD, 0.18) if sel else Color(0.11, 0.15, 0.2), GOLD if sel else Color(1, 1, 1, 0.07), 12, 3 if sel else 1)
+		var c := cr.position + Vector2(cr.size.x / 2.0, cr.size.y * 0.5)
+		var sc := minf(cw2 / 100.0, ch / 150.0)
+		if i == 0:
+			cv.draw_arc(c + Vector2(0, -4), 16.0, 0.0, TAU, 24, Color(1, 1, 1, 0.35), 3.0)
+			cv.draw_line(c + Vector2(-11, 7), c + Vector2(11, -15), Color(1, 1, 1, 0.35), 3.0)
+		else:
+			var origin := c + Vector2(0, 18.0 * sc)
+			GameData.draw_accessory(cv, i, origin, sc, t, true)
+			_draw_skin(String(main.playable_skin()["id"]), origin + Vector2(0, -10) * sc, 84.0 * sc,
+				Color.WHITE if unlocked else Color(0.35, 0.35, 0.4))
+			GameData.draw_accessory(cv, i, origin, sc, t, false)
+		var label: String = Loc.t(it["id"] + ".name")
+		if unlocked:
+			_text_fit(Vector2(cr.position.x, cr.end.y - 8), label, 13, Color.WHITE if sel else Color(1, 1, 1, 0.8), cr.size.x)
+		else:
+			cv.draw_rect(cr.grow(-2.0), Color(0, 0, 0, 0.35))
+			_draw_lock(c + Vector2(0, -8), 0.6)
+			_text_fit(Vector2(cr.position.x, cr.end.y - 8), Loc.t("level_short") % int(it["level"]), 13, Color(0.7, 0.85, 1), cr.size.x)
+		buttons.append({"rect": cr, "id": it["id"], "enabled": true})
+
+
 ## Seviye tablosu: mevcut seviyenin çevresindeki seviyeler, ödülleri ve açtıkları.
 func _draw_level_table(content: Rect2) -> void:
 	var lvl := int(main.save["level"])
@@ -1044,6 +1211,9 @@ func _draw_level_table(content: Rect2) -> void:
 		var unlocks := PackedStringArray()
 		for item in GameData.SKINS + GameData.KNIVES:
 			if int(item["level"]) == L and int(item["price"]) > 0:
+				unlocks.append(Loc.t(item["id"] + ".name"))
+		for item in GameData.ACCESSORIES:
+			if int(item["level"]) == L and L > 1:
 				unlocks.append(Loc.t(item["id"] + ".name"))
 		var mid := r.position.y + r.size.y / 2.0
 		var reward_w := _coin_width(GameData.level_reward(L), 18) + 20.0

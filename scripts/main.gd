@@ -83,7 +83,8 @@ var daily_message := ""
 var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills": 0, "wins": 0,
 	"best_rank": 0, "games": 0, "sound": true, "lang": "", "auto_aim": true,
 	"coins": GameData.STARTING_COINS, "owned": [], "player_name": "", "last_daily": "",
-	"level": 1, "xp": 0, "mp_host": ""}
+	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
+	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {}}
 
 # Çok oyunculu
 var net_mode := ""
@@ -107,6 +108,10 @@ var admin_peers := {} # sunucu: girişli yönetici bağlantıları
 var admin_timer := 0.0
 var admin_view := {} # istemci: sunucudan gelen panel verisi
 var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
+var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
+var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
+## Ağ protokolü sürümü; RPC'ler değişince artırılır.
+const NET_VERSION := 3
 ## Telefonda (özellikle tarayıcıda) efekt yoğunluğu ve zemin detayı azaltılır.
 var low_fx := false
 ## Kameranın gördüğü dünya alanı; dışındaki nesneler çizilmez.
@@ -159,6 +164,7 @@ func _ready() -> void:
 	_load_save()
 	if net_mode != "server":
 		_check_daily_bonus()
+		_check_daily_quests()
 	Loc.lang = save["lang"] if save["lang"] != "" else Loc.detect()
 	RenderingServer.set_default_clear_color(Color(0.08, 0.11, 0.1))
 
@@ -318,10 +324,121 @@ func preview_knife() -> int:
 	return GameData.knife_index(save["knife_id"])
 
 
-## Oyunda kullanılacak bıçak: seçili bıçak alınmamışsa çelik bıçak.
+## Oyunda kullanılacak bıçak: seçili bıçak alınmamışsa (ya da karaktere uymuyorsa) çelik bıçak.
 func selected_knife() -> int:
 	var k := preview_knife()
-	return k if skin_unlocked(GameData.KNIVES[k]) else 0
+	return k if skin_unlocked(GameData.KNIVES[k]) and knife_allowed(k, playable_skin()["id"]) else 0
+
+
+## Kadınlara özel bıçaklar yalnızca kadın karakterlerle kullanılır.
+func knife_allowed(kind: int, skin_id: String) -> bool:
+	return not GameData.KNIVES[kind].get("female", false) or GameData.is_female(skin_id)
+
+
+## Takılı seviye eşyası (seviye yetmiyorsa hiçbiri).
+func selected_acc() -> int:
+	var i := GameData.acc_index(String(save["acc_id"]))
+	return i if level_ok(GameData.ACCESSORIES[i]) else 0
+
+
+func equip_acc(id: String) -> void:
+	var i := GameData.acc_index(id)
+	if not level_ok(GameData.ACCESSORIES[i]):
+		sfx.play("error", 0.0, 0.0)
+		hud.flash_banner(Loc.t("level_req") % int(GameData.ACCESSORIES[i]["level"]))
+		return
+	save["acc_id"] = id
+	_write_save()
+	sfx.play("select", 0.0, 0.0)
+
+
+# --- Günlük görevler ----------------------------------------------------------
+
+## Gün değiştiyse havuzdan o güne özel görevleri seçer (aynı gün herkes için aynı görevler).
+func _check_daily_quests() -> void:
+	var today := Time.get_date_string_from_system()
+	if save["quest_day"] == today and (save["quest_ids"] as Array).size() == GameData.DAILY_QUEST_COUNT:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(today)
+	var pool := range(GameData.QUESTS.size())
+	for i in range(pool.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp = pool[i]
+		pool[i] = pool[j]
+		pool[j] = tmp
+	var ids := []
+	for i in GameData.DAILY_QUEST_COUNT:
+		ids.append(GameData.QUESTS[pool[i]]["id"])
+	save["quest_day"] = today
+	save["quest_ids"] = ids
+	save["quest_prog"] = [0, 0, 0].slice(0, GameData.DAILY_QUEST_COUNT)
+	save["quest_claimed"] = [false, false, false].slice(0, GameData.DAILY_QUEST_COUNT)
+	_write_save()
+
+
+## Maç sonunda görev sayaçlarını ilerletir; yeni tamamlanan görev varsa true döner.
+func _progress_quests(stats: Dictionary) -> bool:
+	_check_daily_quests()
+	var ids: Array = save["quest_ids"]
+	var prog: Array = save["quest_prog"]
+	var newly_done := false
+	for i in ids.size():
+		var q := GameData.quest_info(ids[i])
+		var goal := int(q["goal"])
+		var before := int(prog[i])
+		prog[i] = mini(goal, before + int(stats.get(q["stat"], 0)))
+		if before < goal and int(prog[i]) >= goal:
+			newly_done = true
+	save["quest_prog"] = prog
+	return newly_done
+
+
+func quest_claimable_count() -> int:
+	var n := 0
+	var ids: Array = save["quest_ids"]
+	for i in ids.size():
+		if not save["quest_claimed"][i] and int(save["quest_prog"][i]) >= int(GameData.quest_info(ids[i])["goal"]):
+			n += 1
+	return n
+
+
+func claim_quest(i: int) -> void:
+	var ids: Array = save["quest_ids"]
+	if i < 0 or i >= ids.size() or save["quest_claimed"][i]:
+		return
+	var q := GameData.quest_info(ids[i])
+	if int(save["quest_prog"][i]) < int(q["goal"]):
+		return
+	var claimed: Array = save["quest_claimed"]
+	claimed[i] = true
+	save["quest_claimed"] = claimed
+	save["coins"] = int(save["coins"]) + int(q["coins"])
+	var res := _add_xp(int(q["xp"]))
+	save["coins"] = int(save["coins"]) + int(res["coins"])
+	_write_save()
+	sfx.play("coin", 0.0, 0.0)
+	if not (res["levels"] as Array).is_empty():
+		hud.flash_banner(Loc.t("level_up_menu") % int(save["level"]), Color(0.6, 0.85, 1), 3.0)
+		sfx.play("unlock", 0.0, 0.0)
+	else:
+		hud.flash_banner(Loc.t("quest_reward") % [int(q["coins"]), int(q["xp"])], Color(1, 0.85, 0.3), 2.5)
+
+
+## XP ekler, seviye atlatır. {"levels": atlanan seviyeler, "coins": seviye ödülleri toplamı}
+func _add_xp(amount: int) -> Dictionary:
+	var xp := int(save["xp"]) + amount
+	var lvl := int(save["level"])
+	var levels := []
+	var coins := 0
+	while lvl < GameData.MAX_LEVEL and xp >= GameData.xp_needed(lvl):
+		xp -= GameData.xp_needed(lvl)
+		lvl += 1
+		levels.append(lvl)
+		coins += GameData.level_reward(lvl)
+	save["xp"] = xp
+	save["level"] = lvl
+	return {"levels": levels, "coins": coins}
 
 
 ## Menüde seçili olup henüz alınmamış ilk öğe (önce karakter, sonra bıçak); yoksa boş.
@@ -441,6 +558,7 @@ func _start_round(with_player: bool) -> void:
 		var skin := playable_skin()
 		player = _spawn_fighter(player_name(), skin["id"], skin["color"], true)
 		player.knife_kind = selected_knife()
+		player.accessory = selected_acc()
 	var names := BOT_NAMES.duplicate()
 	names.shuffle()
 	for i in BOT_COUNT:
@@ -481,19 +599,17 @@ func _end_round(won: bool) -> void:
 	last_reward["xp"] = xp_gain
 	last_reward["level_before"] = int(save["level"])
 	last_reward["xp_before"] = int(save["xp"])
-	var xp := int(save["xp"]) + xp_gain
-	var lvl := int(save["level"])
-	var level_coins := 0
-	while lvl < GameData.MAX_LEVEL and xp >= GameData.xp_needed(lvl):
-		xp -= GameData.xp_needed(lvl)
-		lvl += 1
-		level_ups.append(lvl)
-		level_coins += GameData.level_reward(lvl)
-	save["xp"] = xp
-	save["level"] = lvl
+	var res := _add_xp(xp_gain)
+	for L in res["levels"]:
+		level_ups.append(int(L))
+	var level_coins := int(res["coins"])
 	save["coins"] = int(save["coins"]) + level_coins
 	last_reward["level_coins"] = level_coins
+	var quest_done := _progress_quests({"kills": player.kills, "games": 1, "top3": 1 if rank <= 3 else 0,
+		"boxes": boxes_opened, "coins": match_coins})
 	_write_save()
+	if quest_done:
+		hud.flash_banner(Loc.t("quest_done"), Color(0.5, 1, 0.6), 4.0)
 	sfx.play("win" if won else "lose", 0.0, 0.0)
 	get_tree().create_timer(1.2).timeout.connect(func() -> void: sfx.play("coin", 0.0, 0.0))
 	if not level_ups.is_empty():
@@ -557,6 +673,12 @@ func on_button(id: String) -> void:
 			_leave_multiplayer()
 			_start_round(false)
 		_:
+			if id.begins_with("quest_"):
+				claim_quest(id.trim_prefix("quest_").to_int())
+				return
+			if id.begins_with("acc_"):
+				equip_acc(id)
+				return
 			if id.begins_with("skin_"):
 				save["skin_id"] = id
 				_write_save()
@@ -650,8 +772,18 @@ func _spawn_fighter(fname: String, skin_id: String, col: Color, is_player: bool)
 func _spawn_bot(fname: String) -> Fighter:
 	var skin: Dictionary = GameData.available_skins().pick_random()
 	var f := _spawn_fighter(fname, skin["id"], Color.from_hsv(randf(), 0.6, 0.95), false)
-	# Botların yarısı çelik, diğerleri rastgele efektli bıçak taşır
+	# Botların yarısı çelik, diğerleri rastgele efektli bıçak taşır (kadınlara özel bıçaklar yalnızca kadın karakterlerde)
 	f.knife_kind = 0 if randf() < 0.45 else randi_range(1, GameData.KNIVES.size() - 1)
+	if not knife_allowed(f.knife_kind, f.skin_id):
+		f.knife_kind = 0
+	# Bazı botlar seviyelerine uygun bir seviye eşyası takar
+	if randf() < 0.35:
+		var accs := []
+		for i in range(1, GameData.ACCESSORIES.size()):
+			if f.level >= int(GameData.ACCESSORIES[i]["level"]):
+				accs.append(i)
+		if not accs.is_empty():
+			f.accessory = accs.pick_random()
 	return f
 
 
@@ -1195,6 +1327,12 @@ func _fx_knife_particle(fx_kind: String, pos: Vector2, kind: int) -> void:
 		"fire":
 			particles.append({"kind": "ember", "pos": pos, "vel": Vector2(randf_range(-25, 25), randf_range(-90, -40)),
 				"life": 0.55, "max": 0.55, "col": col, "col2": Color(1, 0.95, 0.5), "r": randf_range(3.0, 5.0)})
+		"heart", "petal":
+			# Kalp: pembe parıltı; gül: aşağı süzülen kırmızı yaprak
+			var up := fx_kind == "heart"
+			particles.append({"kind": "sparkle" if up else "bubble", "pos": pos + _random_point(8.0),
+				"vel": Vector2(randf_range(-20, 20), randf_range(-50, -20) if up else randf_range(15, 40)),
+				"life": 0.6, "max": 0.6, "col": col.lightened(0.3) if up else Color(0.9, 0.1, 0.25), "r": randf_range(4.0, 7.0)})
 		"ice", "gold":
 			particles.append({"kind": "sparkle", "pos": pos + _random_point(8.0), "vel": Vector2(0, -15),
 				"life": 0.45, "max": 0.45, "col": col.lightened(0.4), "r": randf_range(4.0, 7.0)})
@@ -1730,9 +1868,10 @@ func _start_server(args: PackedStringArray) -> void:
 	if FileAccess.file_exists(web_dir.path_join("index.html")):
 		web_ok = web.start(web_dir) == OK
 	_build_world()
+	_load_records()
 	for i in bot_target:
 		_spawn_bot(BOT_NAMES.pick_random())
-	slog("Sunucu başlatıldı", Color(0.5, 1, 0.6))
+	slog("Sunucu başlatıldı (sürüm %d)" % NET_VERSION, Color(0.5, 1, 0.6))
 	print("")
 	print("=== KNIFE ARENA SUNUCUSU ÇALIŞIYOR ===")
 	for ip in IP.get_local_addresses():
@@ -1811,7 +1950,13 @@ func server_join(peer: int, info: Dictionary) -> void:
 	var f := _spawn_fighter(fname, skin["id"], skin["color"], false)
 	f.peer_id = peer
 	f.knife_kind = clampi(int(info.get("knife", 0)), 0, GameData.KNIVES.size() - 1)
+	if not knife_allowed(f.knife_kind, f.skin_id):
+		f.knife_kind = 0
 	f.level = clampi(int(info.get("level", 1)), 1, GameData.MAX_LEVEL)
+	f.accessory = clampi(int(info.get("acc", 0)), 0, GameData.ACCESSORIES.size() - 1)
+	if f.level < int(GameData.ACCESSORIES[f.accessory]["level"]):
+		f.accessory = 0
+	_update_record(fname, info, f.level)
 	var first_join := not peer_info.has(peer)
 	peers[peer] = f.net_id
 	peer_info[peer] = {"name": fname, "ip": net.peer_ip(peer), "info": info,
@@ -1819,12 +1964,52 @@ func server_join(peer: int, info: Dictionary) -> void:
 	var bush_data := []
 	for b in bushes:
 		bush_data.append({"pos": b["pos"], "r": b["r"], "blobs": b["blobs"]})
-	net.s_welcome.rpc_id(peer, {"id": f.net_id, "bushes": bush_data})
+	net.s_welcome.rpc_id(peer, {"id": f.net_id, "bushes": bush_data, "top": top_lists(), "v": NET_VERSION})
 	if first_join:
 		total_joins += 1
 		slog("%s katıldı (%s)" % [fname, peer_info[peer]["ip"]], Color(0.5, 1, 0.6))
 	else:
 		slog("%s yeniden doğdu" % fname, Color(0.7, 0.85, 1))
+
+
+## Sunucu skor tablosu: her oyuncunun bildirdiği toplam leş, seviye ve altın (en yüksek değer saklanır).
+## Dosyaya yazılır; ücretsiz sunucu yeniden kurulunca sıfırlanabilir.
+const RECORDS_PATH := "user://records.json"
+const TOP_N := 10
+
+
+func _load_records() -> void:
+	var f := FileAccess.open(RECORDS_PATH, FileAccess.READ)
+	if f == null:
+		return
+	var d = JSON.parse_string(f.get_as_text())
+	if d is Dictionary:
+		records = d
+
+
+func _update_record(fname: String, info: Dictionary, level: int) -> void:
+	var key := fname.to_lower()
+	var r: Dictionary = records.get(key, {"n": fname, "k": 0, "l": 1, "c": 0})
+	r["n"] = fname
+	r["k"] = maxi(int(r["k"]), clampi(int(info.get("kills", 0)), 0, 1000000))
+	r["l"] = maxi(int(r["l"]), level)
+	r["c"] = clampi(int(info.get("coins", 0)), 0, 10000000)
+	records[key] = r
+	var f := FileAccess.open(RECORDS_PATH, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(records))
+
+
+func top_lists() -> Dictionary:
+	var out := {}
+	var all: Array = records.values()
+	for stat in ["k", "l", "c"]:
+		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a[stat]) > int(b[stat]))
+		var rows := []
+		for i in mini(TOP_N, all.size()):
+			rows.append([String(all[i]["n"]), int(all[i][stat])])
+		out[stat] = rows
+	return out
 
 
 func server_input(peer: int, move: Vector2, aim: Vector2, throw_held: bool, target: int) -> void:
@@ -1937,7 +2122,7 @@ func _build_snapshot() -> Dictionary:
 	for f in fighters:
 		f_rows.append([f.net_id, f.display_name, f.skin_id, f.color, f.level, f.knife_kind, f.position, f.hp,
 			f.knives, f.kills, f.alive, f.move_dir, f.facing, f.shield_t, f.speed_t, f.magnet_t, f.rage_t,
-			f.slow_t, f.dash_t, f.peer_id])
+			f.slow_t, f.dash_t, f.peer_id, f.accessory])
 	var p := PackedFloat32Array()
 	for pk in pickups:
 		var pos: Vector2 = pk["pos"]
@@ -1999,12 +2184,14 @@ func _mp_connect() -> void:
 
 
 func _join_info() -> Dictionary:
-	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"])}
+	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"]),
+		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"])}
 
 
 func _on_net_connected() -> void:
 	if net_mode != "client":
 		return
+	net_connected_at = round_time
 	if admin_pending != "":
 		net.c_admin_login.rpc_id(1, admin_pending)
 	else:
@@ -2022,6 +2209,7 @@ func _on_net_failed() -> void:
 func _leave_multiplayer() -> void:
 	admin_pending = ""
 	admin_view = {}
+	net_connected_at = -1.0
 	if net_mode == "client":
 		net.close()
 	net_mode = ""
@@ -2037,7 +2225,12 @@ func _mp_respawn() -> void:
 func client_welcome(data: Dictionary) -> void:
 	if net_mode != "client":
 		return
+	if "--log-net" in OS.get_cmdline_user_args():
+		print("NET welcome id=%s" % data.get("id"))
 	my_net_id = int(data["id"])
+	if data.get("top") is Dictionary:
+		save["top"] = data["top"]
+		_write_save()
 	if player != null and is_instance_valid(player) and not player in fighters:
 		player.queue_free()
 	player = null
@@ -2094,6 +2287,8 @@ func _client_snapshot_body(d: Dictionary) -> void:
 			fighters.append(f)
 			fighter_by_id[id] = f
 			if id == my_net_id:
+				if "--log-net" in OS.get_cmdline_user_args():
+					print("NET oyuncu doğdu, %d savaşçı görünüyor" % d["f"].size())
 				f.is_player = true
 				player = f
 				state = "playing"
@@ -2118,6 +2313,8 @@ func _client_snapshot_body(d: Dictionary) -> void:
 		f.slow_t = row[17]
 		f.dash_t = row[18]
 		f.peer_id = row[19]
+		if row.size() > 20:
+			f.accessory = row[20]
 	# Artık sunucuda olmayan savaşçıları kaldır (kendi ölü karakterimiz sonuç ekranı için kalır)
 	for i in range(fighters.size() - 1, -1, -1):
 		var f := fighters[i]
@@ -2169,7 +2366,11 @@ func _client_process_body(delta: float) -> void:
 	round_time += delta
 	state_time += delta
 	if (state == "connecting" or state == "admin_wait") and state_time > CONNECT_TIMEOUT and my_net_id == 0:
+		# Bağlantı açıldı ama sunucu cevap vermedi: sunucu eski sürümde (RPC'ler uyuşmuyor)
+		var outdated: bool = net_connected_at >= 0.0 and net.is_online()
 		_on_net_failed()
+		if outdated:
+			hud.flash_banner(Loc.t("mp_outdated"), Color(1, 0.6, 0.3), 5.0)
 		return
 	# Girdiyi sunucuya gönder
 	input_timer += delta
