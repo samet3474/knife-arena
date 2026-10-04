@@ -28,6 +28,16 @@ const POWERUP_RADIUS := 46.0
 const START_KNIVES := 5
 const SPAWN_SHIELD := 4.0 # yeni doğan oyuncunun koruma süresi (sn)
 const SHOES_TIME := 9.0 # gizemli kutudan çıkan hız ayakkabısının süresi (sn)
+# Bomba (haritadan alınır, fırlatınca değdiği yerde patlar)
+const BOMB_KIND := -1 # mermi türü olarak bıçak sırası yerine
+const BOMB_SPEED := 820.0
+const BOMB_LIFE := 0.75
+const BOMB_DAMAGE := 48.0
+# Dev Boss
+const BOSS_FIRST := 55.0 # ilk boss bu saniyede
+const BOSS_INTERVAL := 80.0 # boss yenildikten sonra bir sonrakine kadar
+const BOSS_HP := 340.0
+const BOSS_KNIVES := 24
 const THROW_SPEED := 1150.0
 const THROW_LIFE := 0.8
 const THROW_DAMAGE := 22.0
@@ -50,7 +60,7 @@ const BOT_NAMES := [
 	"Battal", "Alp", "Hançer", "Bıçkın", "Keskin", "Satır", "Bora", "Pala", "Şimşek",
 	"Kasırga", "Gölge", "Yıldırım", "Kartal", "Tilki", "Tunç", "Çelik", "Kaya", "Efe",
 ]
-const POWERUP_TYPES := ["speed", "shield", "heal", "magnet", "knives"]
+const POWERUP_TYPES := ["speed", "shield", "heal", "magnet", "knives", "bomb"]
 
 var fighters: Array[Fighter] = []
 var fighter_by_id := {}
@@ -84,6 +94,8 @@ var next_event_time := 45.0
 var boxes_opened := 0
 var level_ups: Array[int] = [] # son maçta atlanan seviyeler (sonuç ekranı için)
 var match_coins := 0
+var next_boss_time := 55.0
+const BOSS_REWARD := 40
 var last_reward := {}
 var daily_message := ""
 var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills": 0, "wins": 0,
@@ -91,7 +103,7 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"coins": GameData.STARTING_COINS, "owned": [], "player_name": "", "last_daily": "",
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
-	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0}
+	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0}
 
 # Çok oyunculu
 var net_mode := ""
@@ -234,8 +246,7 @@ func _ready() -> void:
 	if state == "menu" and "--splash" in args:
 		state = "splash"
 	_apply_test_args(args)
-	if state == "menu" and not "--no-lb" in args:
-		fetch_leaderboard(true)
+	no_lobby = "--no-lb" in args
 
 
 func _startup_log(part: String, start_ms: int) -> void:
@@ -251,11 +262,17 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--knife=") and player != null:
 			player.knife_kind = a.trim_prefix("--knife=").to_int()
 			player.knives = 16
+		if a.begins_with("--chat-say="):
+			test_chat = a.trim_prefix("--chat-say=").replace("_", " ")
 		if a.begins_with("--lb-mode="):
 			hud.lb_mode = a.trim_prefix("--lb-mode=")
 		if a.begins_with("--host="):
 			save["mp_host"] = a.trim_prefix("--host=")
 	test_move = "--test-move" in args
+	if "--boss-now" in args:
+		next_boss_time = 1.0
+	if "--bombs" in args and player != null:
+		player.bombs = 2
 	if "--fragile" in args and player != null:
 		player.hp = 1.0
 		player.since_hit = -999.0
@@ -313,6 +330,8 @@ func _load_save() -> void:
 	if not cfg.has_section_key("player", "sp_kills"):
 		save["sp_kills"] = int(save["total_kills"])
 		save["sp_wins"] = int(save["wins"])
+	if not cfg.has_section_key("player", "sp_coins"):
+		save["sp_coins"] = int(save["coins"])
 
 
 func _write_save() -> void:
@@ -556,6 +575,8 @@ func _reset_match_stats() -> void:
 	state_time = 0.0
 	final_rank = 0
 	unlock_message = ""
+	if net_mode != "client":
+		next_boss_time = BOSS_FIRST
 	next_event_time = randf_range(40.0, 50.0)
 
 
@@ -634,6 +655,9 @@ func _end_round(won: bool) -> void:
 	var level_coins := int(res["coins"])
 	save["coins"] = int(save["coins"]) + level_coins
 	last_reward["level_coins"] = level_coins
+	# Skor tablosu: bu modda kazanılan toplam altın
+	var mode_key := "mp_coins" if net_mode == "client" else "sp_coins"
+	save[mode_key] = int(save[mode_key]) + total + level_coins
 	var quest_done := _progress_quests({"kills": player.kills, "games": 1, "top3": 1 if rank <= 3 else 0,
 		"boxes": boxes_opened, "coins": match_coins})
 	_write_save()
@@ -896,8 +920,8 @@ func _process(delta: float) -> void:
 	if perf_log and not _first_frame_logged:
 		_first_frame_logged = true
 		print("STARTUP ilk kare: motor açıldıktan %d ms sonra" % Time.get_ticks_msec())
-	if lb_fetching and Time.get_ticks_msec() / 1000.0 - lb_started > LB_TIMEOUT:
-		_stop_lb_fetch()
+	if net_mode == "":
+		_lobby_tick()
 	match net_mode:
 		"server":
 			# Sunucu penceresi yalnızca bilgi gösterir: saniyede iki kez yenilemek yeter
@@ -1068,6 +1092,24 @@ func _present(ev: Dictionary) -> void:
 				_fx_smoke(pos, 12, Color(0.3, 0.3, 0.3, 0.7))
 				add_shake(clampf(16.0 - pos.distance_to(camera.position) / 60.0, 0.0, 12.0))
 			_sfx_at("death", pos, pos.distance_to(camera.position) < 600.0)
+		"boss":
+			sfx.play("zone", 0.0, 0.0)
+			add_shake(8.0)
+			hud.flash_banner(Loc.t("boss_spawn"), Color(1, 0.4, 0.3), 3.5)
+			_fx_ring(ev["pos"], Color(1, 0.3, 0.2), 220.0, 0.6, 10.0)
+		"boss_down":
+			var pos: Vector2 = ev["pos"]
+			if _near_camera(pos):
+				_fx_ring(pos, Color(1, 0.85, 0.3), 260.0, 0.7, 12.0)
+				_fx_sparks(pos, Color(1, 0.85, 0.3), 40, 700.0, 4.0)
+			var mine := player != null and _fid(ev["k"]) == player
+			if mine:
+				match_coins += BOSS_REWARD
+				sfx.play("unlock", 0.0, 0.0)
+				add_shake(10.0)
+			var who: String = Loc.t("lb_you").to_upper() if mine else String(ev["kname"])
+			if who != "":
+				hud.flash_banner(Loc.t("boss_down") % [who, BOSS_REWARD], Color(1, 0.85, 0.3), 3.5)
 		"event":
 			sfx.play("zone", 0.0, 0.0)
 			hud.flash_banner(Loc.t("event_" + String(ev["kind"])), Color(1, 0.85, 0.3), 2.6)
@@ -1295,12 +1337,13 @@ func _update_hazards(delta: float) -> void:
 			# Bomba patlar: yakındaki herkese hasar ve savrulma
 			var owner_f := instance_from_id(int(h["owner"])) as Fighter
 			for f in fighters:
-				if not f.alive:
+				# Fırlatılan bomba atanın kendisine zarar vermez
+				if not f.alive or (h.has("dmg") and f == owner_f):
 					continue
 				var d := f.position.distance_to(pos)
 				if d < 170.0:
 					f.knock += (f.position - pos).normalized() * 700.0
-					f.take_damage(32.0 * (1.0 - d / 340.0), owner_f if owner_f != f else null)
+					f.take_damage(float(h.get("dmg", 32.0)) * (1.0 - d / 340.0), owner_f if owner_f != f else null)
 			_emit({"t": "bomb", "pos": pos})
 		if float(h["t"]) <= 0.0:
 			hazards.remove_at(i)
@@ -1511,6 +1554,8 @@ func _apply_powerup(f: Fighter, type: String) -> void:
 			f.hp = minf(f.max_hp, f.hp + 50.0)
 		"knives":
 			f.knives = mini(Fighter.MAX_KNIVES, f.knives + 5)
+		"bomb":
+			f.bombs = mini(Fighter.MAX_BOMBS, f.bombs + 1)
 	_emit({"t": "pu", "f": f.net_id, "type": type})
 
 
@@ -1526,12 +1571,12 @@ func _resolve_combat() -> void:
 			var d := offset.length()
 			var ra := a.ring_radius()
 			var rb := b.ring_radius()
-			if d > ra + rb + Fighter.BODY_RADIUS:
+			if d > ra + rb + maxf(a.body_r(), b.body_r()):
 				continue
 			var dir := offset / d if d > 0.01 else Vector2.RIGHT
 			# Gövdeler iç içe geçmesin
-			if d < Fighter.BODY_RADIUS * 2.0:
-				var push := (Fighter.BODY_RADIUS * 2.0 - d) * 0.5
+			if d < a.body_r() + b.body_r():
+				var push := (a.body_r() + b.body_r() - d) * 0.5
 				a.position -= dir * push
 				b.position += dir * push
 			# Bıçak halkaları çarpışırsa iki taraf da bıçak kaybeder
@@ -1549,12 +1594,12 @@ func _resolve_combat() -> void:
 
 ## Saldıranın bıçak halkası kurbanın gövdesinden geçiyorsa hasar verir.
 func _try_ring_hit(att: Fighter, vic: Fighter, d: float, dir: Vector2) -> void:
-	if att.knives <= 0 or absf(d - att.ring_radius()) > Fighter.BODY_RADIUS:
+	if att.knives <= 0 or absf(d - att.ring_radius()) > vic.body_r():
 		return
 	if not _ready_cd("h%d_%d" % [att.get_instance_id(), vic.get_instance_id()], 0.32):
 		return
 	vic.knock += dir * 320.0
-	var at := vic.position - dir * Fighter.BODY_RADIUS
+	var at := vic.position - dir * vic.body_r()
 	var dmg := (7.0 + att.knives * 0.35) * att.damage_mult()
 	if vic.take_damage(dmg, att):
 		_emit({"t": "hit", "v": vic.net_id, "a": att.net_id, "at": at, "dmg": dmg, "dir": dir})
@@ -1610,7 +1655,7 @@ func player_throw() -> void:
 
 ## Hedef verilmişse rakibin hareketini kestirerek ona, yoksa baktığı yöndeki en yakın rakibe fırlatır.
 func _fighter_throw(f: Fighter, target: Fighter) -> void:
-	if f.knives <= 0 or f.throw_cooldown > 0.0:
+	if (f.knives <= 0 and f.bombs <= 0) or f.throw_cooldown > 0.0:
 		return
 	if target != null and target.alive and target != f and can_see(f, target) \
 			and f.position.distance_to(target.position) < AIM_RANGE + 150.0:
@@ -1639,16 +1684,25 @@ func _fighter_throw(f: Fighter, target: Fighter) -> void:
 
 
 func _throw_knife(f: Fighter, dir: Vector2) -> void:
-	if not f.alive or f.knives <= 0 or f.throw_cooldown > 0.0 or dir == Vector2.ZERO:
+	if not f.alive or (f.knives <= 0 and f.bombs <= 0) or f.throw_cooldown > 0.0 or dir == Vector2.ZERO:
 		return
 	var n := dir.normalized()
+	# Elde bomba varsa önce o atılır (Knife.io'daki gibi): değdiği yerde patlar
+	if f.bombs > 0:
+		f.bombs -= 1
+		f.throw_cooldown = THROW_COOLDOWN * 2.0
+		f.facing = n
+		var bstart := f.position + n * (f.body_r() + 12.0)
+		projectiles.append({"pos": bstart, "vel": n * BOMB_SPEED, "owner": f.get_instance_id(), "life": BOMB_LIFE, "kind": BOMB_KIND})
+		_emit({"t": "throw", "f": f.net_id, "pos": bstart, "n": n})
+		return
 	f.knives -= 1
 	f.throw_cooldown = THROW_COOLDOWN
 	f.facing = n
 	if absf(n.x) > 0.2:
 		f.flip = signf(n.x)
 	f.squash = 0.5
-	var start := f.position + n * (Fighter.BODY_RADIUS + 8.0)
+	var start := f.position + n * (f.body_r() + 8.0)
 	projectiles.append({
 		"pos": start,
 		"vel": n * THROW_SPEED,
@@ -1672,6 +1726,19 @@ func _update_projectiles(delta: float) -> void:
 		var hit := false
 		# Efektli bıçaklar uçarken de parçacık bırakır
 		_projectile_fx(p, delta)
+		if int(p["kind"]) == BOMB_KIND:
+			# Bomba: bir sandığa, bıçak halkasına ya da gövdeye değince veya menzil bitince patlar
+			var boom: bool = float(p["life"]) <= 0.0 or pos.length() > ARENA_RADIUS - 20.0
+			for c in crates:
+				if pos.distance_to(c["pos"]) < CRATE_SIZE * 0.6:
+					boom = true
+			for f in fighters:
+				if f.alive and f.get_instance_id() != owner_id and pos.distance_to(f.position) < f.ring_radius() * 0.6 + f.body_r():
+					boom = true
+			if boom:
+				hazards.append({"kind": "bomb", "pos": pos, "t": 0.0, "owner": owner_id, "dmg": BOMB_DAMAGE})
+				projectiles.remove_at(i)
+			continue
 		for c in range(crates.size() - 1, -1, -1):
 			if pos.distance_to(crates[c]["pos"]) < CRATE_SIZE * 0.55:
 				_hit_crate(c, pos, owner_f)
@@ -1687,7 +1754,7 @@ func _update_projectiles(delta: float) -> void:
 				_lose_knife(f, pos)
 				_emit({"t": "clash", "at": pos, "a": f.net_id, "b": owner_f.net_id if owner_f != null else 0})
 				hit = true
-			elif d < Fighter.BODY_RADIUS + 8.0:
+			elif d < f.body_r() + 8.0:
 				f.knock += vel.normalized() * 380.0
 				var dmg := THROW_DAMAGE * (owner_f.damage_mult() if owner_f != null else 1.0)
 				if f.take_damage(dmg, owner_f):
@@ -1705,6 +1772,12 @@ func _update_projectiles(delta: float) -> void:
 
 
 func _projectile_fx(p: Dictionary, delta: float) -> void:
+	if int(p["kind"]) == BOMB_KIND:
+		# Fitil kıvılcımı ve duman izi
+		if net_mode != "server" and randf() < delta * 25.0 and _near_camera(p["pos"]):
+			particles.append({"kind": "ember", "pos": p["pos"], "vel": Vector2(randf_range(-30, 30), randf_range(-60, -20)),
+				"life": 0.35, "max": 0.35, "col": Color(1, 0.5, 0.1), "col2": Color(1, 0.95, 0.5), "r": randf_range(3.0, 5.0)})
+		return
 	var fx_kind: String = GameData.KNIVES[p["kind"]]["fx"]
 	if fx_kind != "" and randf() < delta * 30.0 and _near_camera(p["pos"]):
 		_fx_knife_particle(fx_kind, p["pos"], p["kind"])
@@ -1748,6 +1821,15 @@ func _kill(f: Fighter) -> void:
 	var killer := instance_from_id(f.last_attacker_id) as Fighter
 	if killer == f:
 		killer = null
+	if f.boss:
+		next_boss_time = round_time + BOSS_INTERVAL
+		_spawn_coins(f.position, 10)
+		_emit({"t": "boss_down", "pos": f.position, "k": killer.net_id if killer != null else 0,
+			"kname": killer.display_name if killer != null else ""})
+		if killer != null:
+			killer.hp = killer.max_hp
+		if net_mode == "server":
+			slog("Dev Boss yenildi (%s)" % (killer.display_name if killer != null else "-"), Color(1, 0.85, 0.3))
 	if killer != null:
 		killer.kills += 1
 		killer.streak += 1
@@ -1779,10 +1861,31 @@ func _maintain_world(delta: float) -> void:
 		_spawn_powerup()
 	if crates.size() < CRATE_TARGET and randf() < delta / 3.0:
 		_spawn_crate()
+	# Dev Boss: belli aralıklarla tek bir boss çıkar (tek oyunculuda arenada yeterince kişi varsa)
+	if not in_menu() and round_time >= next_boss_time and (net_mode == "server" or alive_count() >= 4):
+		_spawn_boss()
 	# Menüdeki gösterim modunda arena hiç boşalmasın
 	if in_menu() and alive_count() < 6:
 		_remove_dead_fighters(0.0)
 		_spawn_bot(BOT_NAMES.pick_random())
+
+
+func _spawn_boss() -> void:
+	next_boss_time = INF # yenilene kadar yenisi gelmez
+	var f := _spawn_bot("DEV")
+	f.boss = true
+	f.max_hp = BOSS_HP
+	f.hp = BOSS_HP
+	f.knives = BOSS_KNIVES
+	f.level = GameData.MAX_LEVEL
+	f.aggression = 1.0
+	f.accessory = 0
+	f.color = Color(1, 0.2, 0.15)
+	f.knife_kind = GameData.knife_index("knife_crimson")
+	f.shield_t = 3.0
+	_emit({"t": "boss", "pos": f.position})
+	if net_mode == "server":
+		slog("Dev Boss arenaya girdi", Color(1, 0.5, 0.45))
 
 
 ## Belirli süredir ölü olan savaşçıları sahneden kaldırır.
@@ -1950,7 +2053,7 @@ func _server_process(delta: float) -> void:
 	# Bot sayısını paneldeki hedefe yaklaştır (fazlası sessizce çıkar, eksiği yavaşça gelir)
 	var bots: Array[Fighter] = []
 	for f in fighters:
-		if f.alive and f.peer_id == 0:
+		if f.alive and f.peer_id == 0 and not f.boss:
 			bots.append(f)
 	bot_spawn_timer -= delta
 	if bots.size() < bot_target and bot_spawn_timer <= 0.0:
@@ -1971,8 +2074,13 @@ func _server_process(delta: float) -> void:
 	snapshot_timer += delta
 	if snapshot_timer >= 1.0 / SNAPSHOT_RATE:
 		snapshot_timer = 0.0
-		if not multiplayer.get_peers().is_empty():
-			net.s_snapshot.rpc(_build_snapshot())
+		# Yalnızca oyuna girmiş oyunculara (menüdeki lobi/sohbet bağlantılarına gönderilmez)
+		if not peers.is_empty():
+			var snap := _build_snapshot()
+			var connected := multiplayer.get_peers()
+			for pid in peers.keys():
+				if connected.has(pid):
+					net.s_snapshot.rpc_id(pid, snap)
 		events.clear()
 
 
@@ -2021,7 +2129,8 @@ func server_join(peer: int, info: Dictionary) -> void:
 ## Dosyaya yazılır; ücretsiz sunucu yeniden kurulunca sıfırlanabilir.
 const RECORDS_PATH := "user://records.json"
 const TOP_N := 10
-const LB_STATS_MAX := ["sk", "sw", "mk", "mb"]
+## sk/sc: tek oyunculu leş/kazanılan altın, mk/mc: çok oyunculu leş/kazanılan altın (sw, mb ek bilgi)
+const LB_STATS_MAX := ["sk", "sc", "mk", "mc", "sw", "mb"]
 
 
 func _load_records() -> void:
@@ -2035,6 +2144,8 @@ func _load_records() -> void:
 		for r in records.values():
 			if r is Dictionary and r.has("k") and not r.has("sk"):
 				r["sk"] = r["k"]
+			if r is Dictionary and r.has("c") and not r.has("sc"):
+				r["sc"] = r["c"]
 
 
 func _update_record(fname: String, info: Dictionary, level: int) -> void:
@@ -2052,6 +2163,38 @@ func _update_record(fname: String, info: Dictionary, level: int) -> void:
 		f.store_string(JSON.stringify(records))
 
 
+## --- Genel sohbet (sunucu) ---
+var chat_log: Array = [] # son mesajlar [{"n", "m"}]
+var chat_peers := {} # sohbete bağlı menüdeki istemciler
+var chat_last := {} # bağlantı → son mesaj zamanı (sel koruması)
+
+
+func server_chat_join(peer: int, _player_name: String) -> void:
+	chat_peers[peer] = true
+	net.s_chat.rpc_id(peer, chat_log, true)
+
+
+func server_chat(peer: int, player_name: String, text: String) -> void:
+	if not chat_peers.has(peer):
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if now - float(chat_last.get(peer, -10.0)) < 1.2:
+		return
+	var fname := player_name.strip_edges().left(14)
+	var msg := text.strip_edges().replace("\n", " ").left(CHAT_MAX_LEN)
+	if fname == "" or msg == "":
+		return
+	chat_last[peer] = now
+	var m := {"n": fname, "m": msg}
+	chat_log.append(m)
+	while chat_log.size() > CHAT_KEEP:
+		chat_log.pop_front()
+	for p in chat_peers.keys():
+		if multiplayer.get_peers().has(p):
+			net.s_chat.rpc_id(p, [m], false)
+	slog("[sohbet] %s: %s" % [fname, msg], Color(0.75, 0.85, 1))
+
+
 func server_top_request(info: Dictionary) -> void:
 	var fname := String(info.get("name", "")).strip_edges().left(14)
 	if fname != "":
@@ -2061,7 +2204,7 @@ func server_top_request(info: Dictionary) -> void:
 func top_lists() -> Dictionary:
 	var out := {}
 	var all: Array = records.values()
-	for stat in LB_STATS_MAX + ["l", "c"]:
+	for stat in ["sk", "sc", "mk", "mc", "l"]:
 		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get(stat, 0)) > int(b.get(stat, 0)))
 		var rows := []
 		for i in mini(TOP_N, all.size()):
@@ -2090,6 +2233,8 @@ func server_dash(peer: int) -> void:
 
 
 func server_remove_peer(peer: int) -> void:
+	chat_peers.erase(peer)
+	chat_last.erase(peer)
 	if admin_peers.has(peer):
 		admin_peers.erase(peer)
 		slog("Yönetici ayrıldı", Color(0.8, 0.8, 1))
@@ -2188,7 +2333,7 @@ func _build_snapshot() -> Dictionary:
 	for f in fighters:
 		f_rows.append([f.net_id, f.display_name, f.skin_id, f.color, f.level, f.knife_kind, f.position, f.hp,
 			f.knives, f.kills, f.alive, f.move_dir, f.facing, f.shield_t, f.speed_t, f.magnet_t, f.rage_t,
-			f.slow_t, f.dash_t, f.peer_id, f.accessory])
+			f.slow_t, f.dash_t, f.peer_id, f.accessory, f.bombs, f.boss])
 	var p := PackedFloat32Array()
 	for pk in pickups:
 		var pos: Vector2 = pk["pos"]
@@ -2253,22 +2398,36 @@ func _mp_connect() -> void:
 func _join_info() -> Dictionary:
 	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"]),
 		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"]),
-		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"])}
+		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"]),
+		"sc": int(save["sp_coins"]), "mc": int(save["mp_coins"])}
 
 
-## Ana menü skor tablosunu çevrimiçi sunucudan çeker (oyuna girmeden kısa bir bağlantıyla).
-## Uyuyan ücretsiz sunucuyu da uyandırır; çok oyunculuya geçiş hızlanır.
+## Lobi bağlantısı: ana menü açıkken sunucuya açık kalan hafif bağlantı (oyuna girilmez).
+## Skor tablosu bununla çekilir ve genel sohbet bununla akar. Uyuyan ücretsiz sunucuyu da uyandırır.
 const LB_REFRESH := 60.0
 const LB_TIMEOUT := 75.0
-var lb_fetching := false
+const LOBBY_RETRY := 20.0
+var lb_fetching := false # lobi bağlantısı açık ya da açılıyor
+var lobby_online := false # lobi bağlantısı kuruldu
 var lb_started := 0.0
+var lobby_retry_at := 0.0
+var chat: Array = [] # istemci: genel sohbet mesajları [{"n", "m"}]
+var no_lobby := false # test: lobi bağlantısı kurulmasın (--no-lb)
+var test_chat := "" # test: bağlanınca gönderilecek sohbet mesajı (--chat-say=)
+const CHAT_KEEP := 30
+const CHAT_MAX_LEN := 80
 
 
 func fetch_leaderboard(force := false) -> void:
-	if net_mode != "" or lb_fetching or _mp_host() == "":
+	if net_mode != "" or _mp_host() == "":
 		return
 	var now := Time.get_ticks_msec() / 1000.0
-	if not force and now - lb_fetched_at < LB_REFRESH:
+	if lobby_online:
+		if force or now - lb_fetched_at >= LB_REFRESH:
+			lb_fetched_at = now
+			net.c_top.rpc_id(1, _top_info())
+		return
+	if lb_fetching:
 		return
 	lb_fetching = true
 	lb_started = now
@@ -2279,22 +2438,74 @@ func fetch_leaderboard(force := false) -> void:
 func _stop_lb_fetch() -> void:
 	if lb_fetching:
 		lb_fetching = false
+		lobby_online = false
 		if net_mode == "":
 			net.close()
+
+
+## İsimsiz oyuncular tabloya yazılmaz (yalnızca liste istenir).
+func _top_info() -> Dictionary:
+	return _join_info() if String(save["player_name"]).strip_edges() != "" else {}
+
+
+## Menüdeyken lobi bağlantısını açık tutar; oyuna (tek oyunculu) girince kapatır.
+func _lobby_tick() -> void:
+	if net_mode != "" or no_lobby:
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if state != "menu":
+		_stop_lb_fetch()
+		return
+	if lb_fetching and not lobby_online and now - lb_started > LB_TIMEOUT:
+		_stop_lb_fetch()
+		lobby_retry_at = now + LOBBY_RETRY
+	if not lb_fetching and now >= lobby_retry_at:
+		fetch_leaderboard(true)
+	elif lobby_online:
+		fetch_leaderboard()
 
 
 func client_top(data: Dictionary) -> void:
 	save["top"] = data
 	lb_fetched_at = Time.get_ticks_msec() / 1000.0
 	_write_save()
-	_stop_lb_fetch.call_deferred()
+
+
+## Sunucudan gelen sohbet mesajları (reset: bağlanınca gelen geçmiş).
+func client_chat(msgs: Array, reset: bool) -> void:
+	if reset:
+		chat.clear()
+		if test_chat != "":
+			send_chat.call_deferred(test_chat)
+			test_chat = ""
+	for m in msgs:
+		if m is Dictionary:
+			chat.append({"n": String(m.get("n", "?")), "m": String(m.get("m", ""))})
+	while chat.size() > CHAT_KEEP:
+		chat.pop_front()
+	if not reset and not msgs.is_empty() and state == "menu":
+		sfx.play("click", -10.0, 0.0)
+
+
+func send_chat(text: String) -> void:
+	text = text.strip_edges().left(CHAT_MAX_LEN)
+	if text == "":
+		return
+	if String(save["player_name"]).strip_edges() == "":
+		hud.flash_banner(Loc.t("chat_need_name"), Color(1, 0.6, 0.3), 3.0)
+		return
+	if not lobby_online:
+		hud.flash_banner(Loc.t("chat_offline"), Color(1, 0.6, 0.3), 3.0)
+		return
+	net.c_chat.rpc_id(1, String(save["player_name"]).strip_edges(), text)
 
 
 func _on_net_connected() -> void:
 	if lb_fetching and net_mode == "":
-		# İsimsiz oyuncular tabloya yazılmaz (yalnızca liste istenir)
-		var info := _join_info() if String(save["player_name"]).strip_edges() != "" else {}
-		net.c_top.rpc_id(1, info)
+		lobby_online = true
+		lb_fetched_at = Time.get_ticks_msec() / 1000.0
+		net.c_top.rpc_id(1, _top_info())
+		net.c_chat_join.rpc_id(1, String(save["player_name"]).strip_edges())
 		return
 	if net_mode != "client":
 		return
@@ -2304,10 +2515,10 @@ func _on_net_connected() -> void:
 	else:
 		net.c_join.rpc_id(1, _join_info())
 
-
 func _on_net_failed() -> void:
 	if lb_fetching and net_mode == "":
 		_stop_lb_fetch()
+		lobby_retry_at = Time.get_ticks_msec() / 1000.0 + LOBBY_RETRY
 		return
 	if net_mode != "client":
 		return
@@ -2426,6 +2637,10 @@ func _client_snapshot_body(d: Dictionary) -> void:
 		f.peer_id = row[19]
 		if row.size() > 20:
 			f.accessory = row[20]
+		if row.size() > 22:
+			f.bombs = row[21]
+			f.boss = row[22]
+			f.max_hp = BOSS_HP if f.boss else 100.0
 	# Artık sunucuda olmayan savaşçıları kaldır (kendi ölü karakterimiz sonuç ekranı için kalır)
 	for i in range(fighters.size() - 1, -1, -1):
 		var f := fighters[i]
@@ -2621,7 +2836,7 @@ func _update_camera(delta: float) -> void:
 		if target != null:
 			camera.position = target.position + target.move_dir * 70.0
 			# Yakın kamera: karakterler telefonda büyük görünsün; halka büyüdükçe biraz uzaklaşır
-			z = clampf(1.22 - (target.ring_radius() - 60.0) * 0.0055, 0.72, 1.22)
+			z = clampf(1.1 - (target.ring_radius() - 60.0) * 0.005, 0.68, 1.1)
 	camera.zoom = camera.zoom.lerp(Vector2(z, z), minf(1.0, 2.0 * delta))
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
 	shake = lerpf(shake, 0.0, minf(1.0, 9.0 * delta))
@@ -2916,6 +3131,8 @@ func _draw_items_body() -> void:
 		var icon: Texture2D = GameData.tex(info["icon"]) if info["icon"] != "" else null
 		if icon != null:
 			items.draw_texture_rect(icon, Rect2(c - Vector2(26, 26), Vector2(52, 52)), false)
+		elif p["type"] == "bomb":
+			_draw_bomb(items, c, 1.0, t)
 		else:
 			# +5 bıçak paketi: yelpaze şeklinde bıçaklar ve "x5"
 			GameData.disc(items, c, 24.0, Color(0.2, 0.25, 0.35, 0.9))
@@ -2924,6 +3141,18 @@ func _draw_items_body() -> void:
 			var font := ThemeDB.fallback_font
 			items.draw_string_outline(font, c + Vector2(-2, 26), "x5", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, 5, Color.BLACK)
 			items.draw_string(font, c + Vector2(-2, 26), "x5", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1, 0.9, 0.4))
+
+
+## Bomba görseli: siyah gövde, parlama, fitil ve yanan kıvılcım.
+func _draw_bomb(ci: CanvasItem, c: Vector2, s: float, t: float) -> void:
+	GameData.disc(ci, c + Vector2(2, 3) * s, 20.0 * s, Color(0, 0, 0, 0.3))
+	GameData.disc(ci, c, 20.0 * s, Color(0.13, 0.13, 0.16))
+	GameData.disc(ci, c + Vector2(-6, -6) * s, 6.0 * s, Color(1, 1, 1, 0.3))
+	ci.draw_rect(Rect2(c + Vector2(4, -22) * s, Vector2(8, 6) * s), Color(0.35, 0.35, 0.4))
+	ci.draw_line(c + Vector2(8, -22) * s, c + Vector2(14, -30) * s, Color(0.6, 0.5, 0.3), 3.0 * s)
+	var flick := 0.7 + 0.3 * sin(t * 30.0)
+	GameData.disc(ci, c + Vector2(14, -31) * s, 6.0 * s * flick, Color(1, 0.5, 0.1))
+	GameData.disc(ci, c + Vector2(14, -31) * s, 3.0 * s * flick, Color(1, 0.95, 0.5))
 
 
 func _draw_fx_low() -> void:
@@ -3007,6 +3236,12 @@ func _draw_fx_body() -> void:
 		if not in_view(pos, 80.0):
 			continue
 		var n := vel.normalized()
+		if int(p["kind"]) == BOMB_KIND:
+			# Dönerek uçan bomba
+			fx.draw_set_transform(pos, Time.get_ticks_msec() / 1000.0 * 12.0, Vector2.ONE)
+			_draw_bomb(fx, Vector2.ZERO, 0.9, Time.get_ticks_msec() / 1000.0)
+			fx.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			continue
 		var glow: Color = GameData.KNIVES[p["kind"]]["glow"]
 		var trail := Color(glow, 1.0) if glow.a > 0.0 else Color(1, 1, 1)
 		for k in 5:

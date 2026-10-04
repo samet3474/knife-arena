@@ -64,6 +64,7 @@ const POWERUPS := {
 	"heal": {"icon": "pu_heal", "color": Color(1, 0.3, 0.35), "duration": 0.0},
 	"magnet": {"icon": "pu_magnet", "color": Color(0.85, 0.45, 0.95), "duration": 8.0},
 	"knives": {"icon": "", "color": Color(1, 1, 1), "duration": 0.0},
+	"bomb": {"icon": "", "color": Color(1, 0.45, 0.2), "duration": 0.0},
 }
 
 ## Ekonomi: maç sonu ödülleri (altın).

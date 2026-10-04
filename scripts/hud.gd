@@ -32,6 +32,7 @@ var banner_time := 0.0
 var banner_color := Color(1, 0.4, 0.35)
 var name_edit: LineEdit
 var admin_edit: LineEdit
+var chat_edit: LineEdit
 var _style_cache := {}
 var _fit_cache := {}
 static var perf_draw_us := 0
@@ -54,6 +55,7 @@ func _ready() -> void:
 	controls.draw.connect(_draw_controls_layer)
 	_create_name_edit()
 	_create_admin_edit()
+	_create_chat_edit()
 
 
 ## Her karede çağrılır: kontroller her karede, bilgi panelleri saniyede 20-30 kez yenilenir.
@@ -102,6 +104,29 @@ func _create_name_edit() -> void:
 	name_edit.focus_exited.connect(_on_name_focus_exited)
 	name_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(name_edit, Loc.t("name_placeholder")))
 	add_child(name_edit)
+
+
+## Ana menü sohbet yazma kutusu.
+func _create_chat_edit() -> void:
+	chat_edit = LineEdit.new()
+	chat_edit.max_length = 80
+	chat_edit.add_theme_font_size_override("font_size", 15)
+	chat_edit.add_theme_color_override("font_color", Color.WHITE)
+	chat_edit.add_theme_color_override("font_placeholder_color", Color(1, 1, 1, 0.4))
+	chat_edit.add_theme_color_override("caret_color", GOLD)
+	for style_name in ["normal", "focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.02, 0.03, 0.05, 0.9)
+		sb.set_corner_radius_all(10)
+		sb.set_border_width_all(1)
+		sb.border_color = Color(0.45, 0.75, 1) if style_name == "focus" else Color(1, 1, 1, 0.15)
+		sb.content_margin_left = 10
+		sb.content_margin_right = 10
+		chat_edit.add_theme_stylebox_override(style_name, sb)
+	chat_edit.text_submitted.connect(func(_t: String) -> void: _on_button("chat_send"))
+	chat_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(chat_edit, Loc.t("chat_placeholder")))
+	chat_edit.visible = false
+	add_child(chat_edit)
 
 
 ## Yönetici şifresi kutusu (yalnızca yönetici giriş ekranında görünür).
@@ -172,6 +197,14 @@ func _process(delta: float) -> void:
 		name_edit.visible = popup == ""
 	elif name_edit.has_focus():
 		name_edit.release_focus()
+	chat_edit.visible = in_menu and popup == ""
+	if chat_edit.visible:
+		chat_edit.placeholder_text = Loc.t("chat_placeholder")
+		var cr := _chat_rect(_screen())
+		chat_edit.position = Vector2(cr.position.x + 8, cr.end.y - 46)
+		chat_edit.size = Vector2(cr.size.x - 66, 38)
+	elif chat_edit.has_focus():
+		chat_edit.release_focus()
 	var login: bool = main.state == "admin_login"
 	admin_edit.visible = login
 	if login:
@@ -298,6 +331,10 @@ func _on_button(id: String) -> void:
 			pass
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
+		"chat_send":
+			main.send_chat(chat_edit.text)
+			chat_edit.text = ""
+			chat_edit.release_focus()
 		"lbm_sp", "lbm_mp":
 			lb_mode = id.trim_prefix("lbm_")
 			lb_tab = LB_TABS[lb_mode][0][0]
@@ -867,26 +904,78 @@ func _draw_menu_side(s: Vector2) -> void:
 			GameData.disc(cv, bc, 13.0, Color(0.9, 0.2, 0.2))
 			_text(bc + Vector2(-13, 6), str(claimable), 15, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 26.0)
 		y += 78.0
-	# Sol alt: kısa istatistikler
-	var best := int(main.save["best_rank"])
-	var stats := [[Loc.t("stat_kills"), str(main.save["total_kills"])], [Loc.t("stat_wins"), str(main.save["wins"])],
-		[Loc.t("stat_best"), "#%d" % best if best > 0 else "-"]]
-	y += 4.0
-	for st in stats:
-		var r := Rect2(24, y, 230, 40)
-		if r.end.y > s.y - 20.0:
-			break
-		_panel(r, PANEL_BG, Color(1, 1, 1, 0.1), 14, 1)
-		_text(Vector2(r.position.x + 14, r.position.y + 26), st[0], 14, Color(1, 1, 1, 0.65))
-		_text(Vector2(r.position.x, r.position.y + 28), st[1], 20, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14)
-		y += 46.0
+	# Sol alt: genel sohbet
+	_draw_chat(_chat_rect(s))
 	_draw_leaderboard(Rect2(s.x - 24 - 260, 92, 260, s.y - 92 - 24))
+
+
+func _chat_rect(s: Vector2) -> Rect2:
+	return Rect2(24, 356, 260, s.y - 356 - 24)
+
+
+## Ana menü genel sohbeti: son mesajlar (alttan yukarı, satır kaydırmalı) ve yazma kutusu.
+func _draw_chat(r: Rect2) -> void:
+	_panel(r, PANEL_BG, Color(0.45, 0.75, 1, 0.35), 16, 1)
+	var online: bool = main.lobby_online
+	GameData.disc(cv, r.position + Vector2(18, 21), 5.0, Color(0.3, 1, 0.4) if online else Color(1, 0.6, 0.3))
+	_text(Vector2(r.position.x + 30, r.position.y + 27), Loc.t("chat_title"), 16, Color(0.6, 0.85, 1))
+	if not online:
+		_text(Vector2(r.position.x, r.position.y + 26), Loc.t("chat_connecting"), 11, Color(1, 1, 1, 0.45),
+			HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0)
+	# Yazma kutusu ve gönder butonu (kutu LineEdit olarak _process'te konumlanır)
+	_button(Rect2(r.end.x - 50, r.end.y - 46, 42, 38), "chat_send", ">", Color(0.28, 0.42, 0.88), true, 20)
+	# Mesajlar: en yenisi altta
+	var fs := 14
+	var lh := 18.0
+	var width := r.size.x - 24.0
+	var y := r.end.y - 56.0
+	var top := r.position.y + 40.0
+	var msgs: Array = main.chat
+	if msgs.is_empty():
+		_text(Vector2(r.position.x + 12, y), Loc.t("chat_empty"), 13, Color(1, 1, 1, 0.4), HORIZONTAL_ALIGNMENT_CENTER, width)
+		return
+	var me := String(main.save["player_name"]).strip_edges().to_lower()
+	for i in range(msgs.size() - 1, -1, -1):
+		var m: Dictionary = msgs[i]
+		var nm := String(m["n"]) + ": "
+		var lines := _wrap(nm + String(m["m"]), fs, width)
+		if y - (lines.size() - 1) * lh < top:
+			break
+		var ly := y - (lines.size() - 1) * lh
+		var name_col := GOLD if String(m["n"]).to_lower() == me else Color(0.6, 0.85, 1)
+		for k in lines.size():
+			var line: String = lines[k]
+			var lx := r.position.x + 12
+			if k == 0:
+				# İlk satırda isim renkli, mesaj beyaz
+				_text(Vector2(lx, ly), nm, fs, name_col)
+				var nw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+				_text(Vector2(lx + nw, ly), line.substr(nm.length()), fs, Color.WHITE)
+			else:
+				_text(Vector2(lx, ly + k * lh), line, fs, Color.WHITE)
+		y -= lines.size() * lh + 4.0
+
+
+## Basit kelime kaydırma: metni verilen genişliğe sığan satırlara böler.
+func _wrap(text: String, size: int, width: float) -> PackedStringArray:
+	var out := PackedStringArray()
+	var line := ""
+	for word in text.split(" ", false):
+		var test := word if line == "" else line + " " + word
+		if font.get_string_size(test, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= width or line == "":
+			line = test
+		else:
+			out.append(line)
+			line = word
+	if line != "":
+		out.append(line)
+	return out
 
 
 ## Skor tablosu kategorileri: mod → [istatistik anahtarı, başlık, kayıttaki karşılığı, renk]
 const LB_TABS := {
-	"sp": [["sk", "lb_kills", "sp_kills"], ["sw", "lb_wins", "sp_wins"], ["l", "lb_level", "level"]],
-	"mp": [["mk", "lb_kills", "mp_kills"], ["mb", "lb_best", "mp_best"], ["c", "lb_coins", "coins"]],
+	"sp": [["sk", "lb_kills", "sp_kills"], ["l", "lb_level", "level"], ["sc", "lb_coins", "sp_coins"]],
+	"mp": [["mk", "lb_kills", "mp_kills"], ["l", "lb_level", "level"], ["mc", "lb_coins", "mp_coins"]],
 }
 const MEDALS := [Color(1, 0.82, 0.25), Color(0.82, 0.85, 0.92), Color(0.86, 0.55, 0.3)]
 
@@ -1422,17 +1511,17 @@ func _draw_stats(s: Vector2) -> void:
 	_draw_player_card(p)
 	main.perf_mark("hud_card", _t)
 	_t = Time.get_ticks_usec()
-	_draw_minimap(Rect2(16, 124, 150, 150))
+	_draw_minimap(Rect2(16, 62, 124, 124))
 	main.perf_mark("hud_minimap", _t)
 	_t = Time.get_ticks_usec()
 
 	# Aktif güçlendirme süreleri (mini haritanın sağında)
-	var y := 140.0
+	var y := 84.0
 	for entry in [["speed", p.speed_t], ["shield", p.shield_t], ["magnet", p.magnet_t], ["rage", p.rage_t], ["slow", p.slow_t]]:
 		var left: float = entry[1]
 		if left <= 0.0:
 			continue
-		var c := Vector2(198, y)
+		var c := Vector2(168, y)
 		GameData.disc(cv, c, 22.0, Color(0, 0, 0, 0.5))
 		var info: Dictionary = GameData.POWERUPS.get(entry[0], {})
 		var icon: Texture2D = GameData.tex(info["icon"]) if not info.is_empty() else null
@@ -1520,31 +1609,24 @@ func _draw_scoreboard(s: Vector2) -> void:
 
 
 ## Sol üst oyuncu kartı: portre + seviye, isim, can barı, bıçak/leş/altın sayaçları.
+## Sol üst: ince sayaç şeridi (bıçak, bomba, leş, altın). Can karakterin üstünde gösterildiği için
+## büyük oyuncu kartı yok; arena daha geniş görünür.
 func _draw_player_card(p: Fighter) -> void:
-	var card := Rect2(16, 14, 310, 100)
-	_panel(card, PANEL_BG, Color(1, 1, 1, 0.1), 18, 1, 6)
-	var pc := Vector2(64, 64)
-	GameData.disc(cv, pc, 40.0, p.color.darkened(0.55))
-	cv.draw_arc(pc, 40.0, 0.0, TAU, 40, p.color, 3.0)
-	_draw_skin(p.skin_id, pc + Vector2(0, 4), 80.0)
-	_level_badge(pc + Vector2(30, 30), 14.0, p.level)
-
-	var x := 116.0
-	var nm := p.display_name
-	_text(Vector2(x, 38), nm, _fit_size(nm, 18, 200.0), Color.WHITE)
-	# Can barı: kalan cana göre yeşilden kırmızıya döner, üstünde sayı yazar
-	var ratio := clampf(p.hp / p.max_hp, 0.0, 1.0) if p.alive else 0.0
-	var hp_rect := Rect2(x, 48, 196, 20)
-	_progress_bar(hp_rect, ratio, Color(1, 0.25, 0.2).lerp(Color(0.3, 0.9, 0.4), ratio))
-	_text(Vector2(hp_rect.position.x, hp_rect.end.y - 4), "%d / %d" % [ceili(maxf(p.hp, 0.0)), int(p.max_hp)], 14, Color.WHITE,
-		HORIZONTAL_ALIGNMENT_CENTER, hp_rect.size.x)
-	# Sayaçlar
-	var row := 96.0
-	KnifeArt.draw(cv, Vector2(x + 10, row - 7), PI / 4.0, 0.75, p.knife_kind, false)
-	_text(Vector2(x + 24, row), str(p.knives), 18, Color.WHITE)
-	_skull(Vector2(x + 82, row - 8), 7.0, Color(1, 0.6, 0.55))
-	_text(Vector2(x + 94, row), str(p.kills), 18, Color(1, 0.6, 0.55))
-	_coin_amount(Vector2(x + 136, row), main.match_coins, 18)
+	var w := 230.0 + (54.0 if p.bombs > 0 else 0.0)
+	_panel(Rect2(16, 14, w, 40), PANEL_BG, Color(1, 1, 1, 0.1), 20, 1)
+	var x := 30.0
+	var row := 41.0
+	KnifeArt.draw(cv, Vector2(x + 8, row - 7), PI / 4.0, 0.7, p.knife_kind, false)
+	_text(Vector2(x + 22, row), str(p.knives), 18, Color.WHITE)
+	x += 66.0
+	if p.bombs > 0:
+		main._draw_bomb(cv, Vector2(x + 8, row - 5), 0.45, Time.get_ticks_msec() / 1000.0)
+		_text(Vector2(x + 22, row), "x%d" % p.bombs, 18, Color(1, 0.6, 0.3))
+		x += 54.0
+	_skull(Vector2(x + 8, row - 8), 7.0, Color(1, 0.6, 0.55))
+	_text(Vector2(x + 20, row), str(p.kills), 18, Color(1, 0.6, 0.55))
+	x += 56.0
+	_coin_amount(Vector2(x, row), main.match_coins, 18)
 
 
 ## Mini harita: köşeleri yuvarlak kare içinde arena, daralan alan, kutular, güçlendirmeler,
@@ -1628,7 +1710,7 @@ func _draw_controls(s: Vector2) -> void:
 
 	var p: Fighter = main.player
 	var c := _throw_center()
-	var ready: bool = p.knives > 0
+	var ready: bool = p.knives > 0 or p.bombs > 0
 	var col := Color(0.95, 0.3, 0.25, 0.85 if throw_held() else 0.65) if ready else Color(0.5, 0.5, 0.5, 0.4)
 	var press := 4.0 if throw_held() else 0.0
 	GameData.disc(cv, c + Vector2(0, 6), THROW_RADIUS, Color(0, 0, 0, 0.25))
@@ -1641,7 +1723,12 @@ func _draw_controls(s: Vector2) -> void:
 	if main.player_target != null and ready:
 		var pulse := fmod(Time.get_ticks_msec() / 700.0, 1.0)
 		cv.draw_arc(c + Vector2(0, press), THROW_RADIUS + pulse * 22.0, 0.0, TAU, 48, Color(1, 0.3, 0.25, 1.0 - pulse), 4.0)
-	KnifeArt.draw(cv, c + Vector2(0, press - 8), PI / 4.0, 2.0, p.knife_kind)
+	if p.bombs > 0:
+		# Elde bomba varsa bir sonraki atış bomba: butonda bomba ve sayısı
+		main._draw_bomb(cv, c + Vector2(0, press - 6), 1.3, Time.get_ticks_msec() / 1000.0)
+		_text(Vector2(c.x + 18, c.y + press - 30), "x%d" % p.bombs, 20, Color(1, 0.85, 0.4))
+	else:
+		KnifeArt.draw(cv, c + Vector2(0, press - 8), PI / 4.0, 2.0, p.knife_kind)
 	_text(Vector2(c.x - 60, c.y + press + 50), Loc.t("throw"), 18, Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, 120.0)
 
 	# Atılma (dash) butonu: bekleme süresi dolana kadar gri, dolunca parlar

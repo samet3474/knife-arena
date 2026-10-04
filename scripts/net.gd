@@ -154,6 +154,24 @@ func s_top(data: Dictionary) -> void:
 	main.client_top(data)
 
 
+## Genel sohbet (yalnızca ana menüde): katılınca geçmiş gelir, sonra yeni mesajlar.
+@rpc("any_peer", "reliable")
+func c_chat_join(player_name: String) -> void:
+	if multiplayer.is_server():
+		main.server_chat_join(multiplayer.get_remote_sender_id(), player_name)
+
+
+@rpc("any_peer", "reliable")
+func c_chat(player_name: String, text: String) -> void:
+	if multiplayer.is_server():
+		main.server_chat(multiplayer.get_remote_sender_id(), player_name, text)
+
+
+@rpc("authority", "reliable")
+func s_chat(msgs: Array, reset: bool) -> void:
+	main.client_chat(msgs, reset)
+
+
 func peer_ip(id: int) -> String:
 	if peer == null or not multiplayer.get_peers().has(id):
 		return "?"

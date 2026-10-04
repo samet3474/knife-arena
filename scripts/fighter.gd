@@ -37,6 +37,16 @@ var last_kill_time := -99.0
 var multi := 0 # kısa sürede art arda alınan leş sayısı
 var knife_kind := 0
 var accessory := 0 # GameData.ACCESSORIES sırası (seviye eşyası)
+var bombs := 0 # elde tutulan bomba sayısı; fırlatınca önce bomba atılır
+var boss := false # Dev Boss: büyük gövde, çok can, yavaş
+
+const BOSS_SCALE := 1.5
+const MAX_BOMBS := 3
+
+
+## Gövde yarıçapı (boss daha iri, vurulması da kolay).
+func body_r() -> float:
+	return BODY_RADIUS * (BOSS_SCALE if boss else 1.0)
 var in_bush := false
 var concealed := false # çalıda ve oyuncuya uzak: ismi gizlenir
 var color := Color.WHITE
@@ -111,7 +121,7 @@ func _setup_sprite() -> void:
 
 
 func ring_radius() -> float:
-	return BODY_RADIUS + 32.0 + mini(knives, MAX_KNIVES) * 1.2
+	return body_r() + 32.0 + mini(knives, MAX_KNIVES) * 1.2
 
 
 func move_speed() -> float:
@@ -120,6 +130,8 @@ func move_speed() -> float:
 		s *= 1.45
 	if slow_t > 0.0:
 		s *= 0.55
+	if boss:
+		s *= 0.82
 	return s
 
 
@@ -228,9 +240,10 @@ func _update_sprite() -> void:
 	# Sprite'ın doğal bakış yönüne göre aynala: sola bakan sprite sağa giderken çevrilir.
 	# Önden bakan karakterler aynalanmaz.
 	var mirror := flip * face_dir if face_dir != 0 else 1.0
-	body.scale = Vector2(_base_scale * sx * mirror, _base_scale * sy)
+	var big := BOSS_SCALE if boss else 1.0
+	body.scale = Vector2(_base_scale * sx * mirror, _base_scale * sy) * big
 	body.modulate = Color(1.0, 0.75, 0.75) if rage_t > 0.0 else (Color(0.7, 0.8, 1.0) if slow_t > 0.0 else Color.WHITE)
-	body.position = Vector2(0, -16.0 - (breathe * 40.0))
+	body.position = Vector2(0, (-16.0 - (breathe * 40.0)) * big)
 	body.rotation = 0.0
 	# Yürüme animasyonu olmayan karakterler için zıplayarak yürüme
 	if moving and _walk_frames == 1:
@@ -309,9 +322,9 @@ func _draw_body() -> void:
 		draw_arc(Vector2(0, -6), BODY_RADIUS + 10.0, 0.0, TAU, 32, Color(0.5, 0.75, 1, 0.6), 3.0)
 
 	# Gölge ve takım rengi halkası
-	draw_set_transform(Vector2(0, BODY_RADIUS * 0.75), 0.0, Vector2(1.0, 0.4))
-	GameData.disc(self, Vector2.ZERO, BODY_RADIUS * 1.15, Color(0, 0, 0, 0.3))
-	draw_arc(Vector2.ZERO, BODY_RADIUS * 1.15, 0.0, TAU, 40, Color(color, 0.9), 5.0)
+	draw_set_transform(Vector2(0, body_r() * 0.75), 0.0, Vector2(1.0, 0.4))
+	GameData.disc(self, Vector2.ZERO, body_r() * 1.15, Color(0, 0, 0, 0.3))
+	draw_arc(Vector2.ZERO, body_r() * 1.15, 0.0, TAU, 40, Color(1, 0.2, 0.15) if boss else Color(color, 0.9), 5.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if accessory > 0 and not concealed:
 		_draw_acc(self, true)
@@ -366,15 +379,15 @@ func _draw_overlay_body() -> void:
 	if shield_t > 0.0:
 		var blink := 1.0 if shield_t > 1.5 or fmod(shield_t, 0.3) > 0.15 else 0.3
 		var wobble := sin(idle_time * 5.0) * 2.0
-		GameData.disc(overlay, Vector2(0, -6), BODY_RADIUS + 16.0 + wobble, Color(0.35, 0.7, 1, 0.18 * blink))
-		overlay.draw_arc(Vector2(0, -6), BODY_RADIUS + 16.0 + wobble, 0.0, TAU, 48, Color(0.6, 0.85, 1, 0.8 * blink), 3.0)
+		GameData.disc(overlay, Vector2(0, -6), body_r() + 16.0 + wobble, Color(0.35, 0.7, 1, 0.18 * blink))
+		overlay.draw_arc(Vector2(0, -6), body_r() + 16.0 + wobble, 0.0, TAU, 48, Color(0.6, 0.85, 1, 0.8 * blink), 3.0)
 		overlay.draw_arc(Vector2(0, -6), BODY_RADIUS + 10.0, -2.4, -1.6, 12, Color(1, 1, 1, 0.5 * blink), 3.0)
 
 	if concealed:
 		return
 	var font := ThemeDB.fallback_font
-	var top := -ring_radius() - 30.0 if knives > 0 else -BODY_RADIUS - 56.0
-	var name_col := Color(1, 0.92, 0.3) if is_player else Color.WHITE
+	var top := -ring_radius() - 30.0 if knives > 0 else -body_r() * 2.0 - 56.0
+	var name_col := Color(1, 0.92, 0.3) if is_player else (Color(1, 0.35, 0.3) if boss else Color.WHITE)
 	overlay.draw_string_outline(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, 5, Color(0, 0, 0, 0.75))
 	overlay.draw_string(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, name_col)
 	# Seviye rozeti (ismin solunda)
