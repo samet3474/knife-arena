@@ -21,6 +21,7 @@ var joy_index := -1
 var joy_origin := Vector2.ZERO
 var joy_pos := Vector2.ZERO
 var throw_index := -1
+var throw_pos := Vector2.ZERO # FIRLAT tuşuna basan parmağın son konumu
 var buttons: Array[Dictionary] = []
 var font: Font
 var page := -1
@@ -337,30 +338,52 @@ func _input(event: InputEvent) -> void:
 			if main.state != "playing":
 				return
 			if touch.position.distance_to(_throw_center()) < THROW_RADIUS + 34.0:
-				throw_index = touch.index
+				throw_index = 0
+				throw_pos = touch.position
 				main.player_throw()
 			elif touch.position.distance_to(_dash_center()) < DASH_RADIUS + 26.0:
 				main.player_dash()
 			elif touch.position.x < _screen().x * 0.6:
-				# Ekranın sol tarafında nereye dokunulursa joystick orada açılır.
-				# Önceki parmağın kalkışı kaybolmuş olsa bile (sistem hareketi, açılan pencere)
-				# yeni dokunuş joystick'i devralır; aksi halde joystick kalıcı olarak kilitlenir.
-				joy_index = touch.index
+				# Ekranın sol tarafında nereye dokunulursa joystick orada açılır; yeni dokunuş her zaman devralır
+				# (önceki parmağın kalkışı kaybolmuş olsa bile joystick kilitli kalmaz).
+				joy_index = 0
 				joy_origin = touch.position
 				joy_pos = touch.position
 		else:
-			if touch.index == joy_index:
-				joy_index = -1
-			if touch.index == throw_index:
-				throw_index = -1
+			# Hangi kontrolün parmağı kalktı? iPhone Safari'de parmak numarası (index) bozuk geldiği için
+			# (Godot hatası #95941) numaraya değil, kalkan parmağın konumuna bakılır: en yakın kontrol bırakılır.
+			var p := touch.position
+			match _nearest_control(p):
+				"joy":
+					joy_index = -1
+				"throw":
+					throw_index = -1
 	elif event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
-		if drag.index == joy_index:
-			joy_pos = drag.position
-			var off := joy_pos - joy_origin
-			if off.length() > JOY_RADIUS:
-				joy_origin = joy_pos - off.normalized() * JOY_RADIUS
+		# Sürükleme de konumuna göre en yakın etkin kontrole verilir (numara kullanılmaz)
+		match _nearest_control(drag.position):
+			"joy":
+				joy_pos = drag.position
+				var off := joy_pos - joy_origin
+				if off.length() > JOY_RADIUS:
+					joy_origin = joy_pos - off.normalized() * JOY_RADIUS
+			"throw":
+				throw_pos = drag.position
 
+
+## Bir dokunuşun hangi etkin kontrole ait olduğu: joystick'in ya da FIRLAT parmağının son konumuna
+## hangisi daha yakınsa o. Joystick ekranın solunda, FIRLAT sağında olduğu için karışmaz.
+func _nearest_control(p: Vector2) -> String:
+	var dj := p.distance_to(joy_pos) if joy_index >= 0 else INF
+	var dt := p.distance_to(throw_pos) if throw_index >= 0 else INF
+	# Başka bir parmak (ör. ATIL'a dokunup kalkan) yanlışlıkla joystick'i / FIRLAT'ı bırakmasın
+	if dj != INF and p.x > _screen().x * 0.6 and dj > JOY_RADIUS * 1.6:
+		dj = INF
+	if dt != INF and dt > THROW_RADIUS * 1.6:
+		dt = INF
+	if dj == INF and dt == INF:
+		return ""
+	return "joy" if dj <= dt else "throw"
 
 func _on_button(id: String) -> void:
 	_redraw_timer = 0.0 # basılan butonun etkisi hemen görünsün
