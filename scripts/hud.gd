@@ -818,13 +818,11 @@ func _draw_showcase(s: Vector2, t: float) -> void:
 		if pos[i].y < kc.y:
 			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
 	var acc: int = main.selected_acc()
-	var acc_sc := 200.0 / 84.0
-	var acc_origin := c + Vector2(0, -12) + Vector2(0, 10) * acc_sc
 	if acc > 0:
-		GameData.draw_accessory(cv, acc, acc_origin, acc_sc, t, true)
+		GameData.draw_accessory(cv, acc, sel_id, c + Vector2(0, -12), 200.0, 1.0, t, true)
 	_draw_skin(sel_id, c + Vector2(0, -12), 200.0, Color.WHITE, 1 + int(t * 10.0) % 8)
 	if acc > 0:
-		GameData.draw_accessory(cv, acc, acc_origin, acc_sc, t, false)
+		GameData.draw_accessory(cv, acc, sel_id, c + Vector2(0, -12), 200.0, 1.0, t, false)
 	for i in 8:
 		if pos[i].y >= kc.y:
 			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
@@ -1213,11 +1211,11 @@ func _draw_quests_and_items(r: Rect2, t: float) -> void:
 			cv.draw_arc(c + Vector2(0, -4), 16.0, 0.0, TAU, 24, Color(1, 1, 1, 0.35), 3.0)
 			cv.draw_line(c + Vector2(-11, 7), c + Vector2(11, -15), Color(1, 1, 1, 0.35), 3.0)
 		else:
-			var origin := c + Vector2(0, 18.0 * sc)
-			GameData.draw_accessory(cv, i, origin, sc, t, true)
-			_draw_skin(String(main.playable_skin()["id"]), origin + Vector2(0, -10) * sc, 84.0 * sc,
-				Color.WHITE if unlocked else Color(0.35, 0.35, 0.4))
-			GameData.draw_accessory(cv, i, origin, sc, t, false)
+			var sid := String(main.playable_skin()["id"])
+			var sc_center := c + Vector2(0, 8.0 * sc)
+			GameData.draw_accessory(cv, i, sid, sc_center, 84.0 * sc, 1.0, t, true)
+			_draw_skin(sid, sc_center, 84.0 * sc, Color.WHITE if unlocked else Color(0.35, 0.35, 0.4))
+			GameData.draw_accessory(cv, i, sid, sc_center, 84.0 * sc, 1.0, t, false)
 		var label: String = Loc.t(it["id"] + ".name")
 		if unlocked:
 			_text_fit(Vector2(cr.position.x, cr.end.y - 8), label, 13, Color.WHITE if sel else Color(1, 1, 1, 0.8), cr.size.x)

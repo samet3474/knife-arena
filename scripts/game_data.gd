@@ -212,15 +212,70 @@ static func quest_info(id: String) -> Dictionary:
 	return QUESTS[0]
 
 
-## Seviye eşyasını çizer. Koordinatlar karakterin merkezine göre (ölçek 1 = oyundaki boyut).
+static var _body_info := {}
+
+
+## Karakter görselinin ölçüleri (0..1 arası, karenin boyutuna göre): kafanın tepesi (top),
+## kafanın yatay merkezi (cx) ve yarı genişliği (hw), ayak hizası (bottom).
+## Görselin saydam olmayan piksellerinden bir kez hesaplanır; seviye eşyaları buna göre oturur.
+static func body_info(skin_id: String) -> Dictionary:
+	if _body_info.has(skin_id):
+		return _body_info[skin_id]
+	var info := {"top": 0.12, "bottom": 0.92, "cx": 0.5, "hw": 0.2}
+	var sheet := tex(skin_id + "_walk")
+	var t := sheet if sheet != null else tex(skin_id)
+	if t != null:
+		var img := t.get_image()
+		if img != null:
+			if img.is_compressed():
+				img.decompress()
+			var h := img.get_height()
+			var w := h if sheet != null else img.get_width()
+			var top := -1
+			var bottom := -1
+			for y in h:
+				for x in w:
+					if img.get_pixel(x, y).a > 0.5:
+						if top < 0:
+							top = y
+						bottom = y
+						break
+			if top >= 0:
+				# Kafa: üstten yüksekliğin %20'si kadar satırın yatay genişliği
+				var head_end := top + maxi(2, int((bottom - top) * 0.2))
+				var minx := w
+				var maxx := -1
+				for y in range(top, head_end + 1):
+					for x in w:
+						if img.get_pixel(x, y).a > 0.5:
+							minx = mini(minx, x)
+							maxx = maxi(maxx, x)
+				info = {"top": float(top) / h, "bottom": float(bottom + 1) / h,
+					"cx": (minx + maxx + 1) / 2.0 / w, "hw": maxf(2.0, (maxx - minx + 1) / 2.0) / w}
+	_body_info[skin_id] = info
+	return info
+
+
+## Seviye eşyasını karakterin üstüne oturtarak çizer.
+## center: karakter görselinin merkezi, size: görselin ekrandaki boyu, mirror: -1 ise görsel aynalanmış.
 ## back: karakterin arkasına çizilen kısım (aura, kanat), değilse önü (taç, hale).
-static func draw_accessory(ci: CanvasItem, kind: int, origin: Vector2, s: float, t: float, back: bool) -> void:
+static func draw_accessory(ci: CanvasItem, kind: int, skin_id: String, center: Vector2, size: float, mirror: float,
+		t: float, back: bool) -> void:
 	var id: String = ACCESSORIES[kind]["id"]
+	if id == "acc_none":
+		return
+	var b := body_info(skin_id)
+	var s := size / 84.0
+	var head_x := center.x + (float(b["cx"]) - 0.5) * size * mirror
+	var head := Vector2(head_x, center.y + (float(b["top"]) - 0.5) * size)
+	var feet := Vector2(center.x, center.y + (float(b["bottom"]) - 0.5) * size)
+	# Taç ve hale kafanın genişliğine göre ölçeklenir
+	var hs := clampf(float(b["hw"]) * size * 2.0 / 30.0, s * 0.85, s * 1.25)
 	match id:
 		"acc_aura":
 			if not back:
 				return
-			ci.draw_set_transform(origin + Vector2(0, 21) * s, 0.0, Vector2(1.0, 0.42))
+			ci.draw_set_transform(feet + Vector2(0, -3) * s, 0.0, Vector2(1.0, 0.42))
 			for i in 12:
 				var a := t * 2.2 + TAU * i / 12.0
 				var flick := 0.75 + 0.25 * sin(t * 13.0 + i * 1.7)
@@ -232,42 +287,43 @@ static func draw_accessory(ci: CanvasItem, kind: int, origin: Vector2, s: float,
 			if not back:
 				return
 			var flap := sin(t * 5.0) * 0.18
+			# Omuz: kafa ile ayak arasının yaklaşık %40'ı
+			var shoulder := Vector2(head_x, head.y + (feet.y - head.y) * 0.4)
 			for side in [-1.0, 1.0]:
 				var pts := PackedVector2Array()
-				# Kanat: omuzdan dışa doğru üç tüy kademesi
-				var base := Vector2(14.0 * side, -18.0)
+				var base := shoulder + Vector2(8.0 * side, 0) * s
 				var outline := [Vector2(0, 0), Vector2(18, -22), Vector2(38, -26), Vector2(46, -16), Vector2(40, -8),
 					Vector2(44, 0), Vector2(34, 6), Vector2(36, 14), Vector2(22, 14), Vector2(8, 8)]
 				for v in outline:
 					var w: Vector2 = (v as Vector2).rotated(-flap) * Vector2(side, 1.0)
-					pts.append(origin + (base + w) * s)
+					pts.append(base + w * s * 0.72)
 				ci.draw_colored_polygon(pts, Color(1, 1, 1, 0.92))
 				pts.append(pts[0])
-				ci.draw_polyline(pts, Color(0.55, 0.75, 1), 2.0 * s)
+				ci.draw_polyline(pts, Color(0.55, 0.75, 1), 1.6 * s)
 		"acc_crown":
 			if back:
 				return
-			var c := origin + Vector2(0, -50.0 + sin(t * 3.0) * 1.5) * s
+			# Tacın alt kenarı kafanın tepesine biraz gömülü durur
+			var c := head + Vector2(0, -4.0 + sin(t * 3.0) * 0.8) * hs
 			var pts := PackedVector2Array([Vector2(-15, 6), Vector2(-17, -10), Vector2(-8, -2), Vector2(0, -14),
 				Vector2(8, -2), Vector2(17, -10), Vector2(15, 6)])
 			for i in pts.size():
-				pts[i] = c + pts[i] * s
+				pts[i] = c + pts[i] * hs
 			ci.draw_colored_polygon(pts, Color(1, 0.8, 0.2))
 			pts.append(pts[0])
-			ci.draw_polyline(pts, Color(0.45, 0.28, 0.02), 2.0 * s)
-			disc(ci, c + Vector2(0, 1) * s, 3.2 * s, Color(1, 0.2, 0.3))
-			disc(ci, c + Vector2(-9, 2) * s, 2.4 * s, Color(0.3, 0.7, 1))
-			disc(ci, c + Vector2(9, 2) * s, 2.4 * s, Color(0.3, 0.7, 1))
+			ci.draw_polyline(pts, Color(0.45, 0.28, 0.02), 2.0 * hs)
+			disc(ci, c + Vector2(0, 1) * hs, 3.2 * hs, Color(1, 0.2, 0.3))
+			disc(ci, c + Vector2(-9, 2) * hs, 2.4 * hs, Color(0.3, 0.7, 1))
+			disc(ci, c + Vector2(9, 2) * hs, 2.4 * hs, Color(0.3, 0.7, 1))
 		"acc_halo":
 			if back:
 				return
-			var c := origin + Vector2(0, -58.0 + sin(t * 2.5) * 2.0) * s
-			ci.draw_texture_rect(glow_tex(), Rect2(c - Vector2(30, 16) * s, Vector2(60, 32) * s), false, Color(1, 0.95, 0.5, 0.6))
+			var c := head + Vector2(0, -10.0 + sin(t * 2.5) * 1.5) * hs
+			ci.draw_texture_rect(glow_tex(), Rect2(c - Vector2(30, 16) * hs, Vector2(60, 32) * hs), false, Color(1, 0.95, 0.5, 0.6))
 			ci.draw_set_transform(c, 0.0, Vector2(1.0, 0.35))
-			ci.draw_arc(Vector2.ZERO, 17.0 * s, 0.0, TAU, 32, Color(1, 0.92, 0.45), 4.5 * s)
-			ci.draw_arc(Vector2.ZERO, 17.0 * s, 0.0, TAU, 32, Color(1, 1, 0.85), 1.5 * s)
+			ci.draw_arc(Vector2.ZERO, 17.0 * hs, 0.0, TAU, 32, Color(1, 0.92, 0.45), 4.5 * hs)
+			ci.draw_arc(Vector2.ZERO, 17.0 * hs, 0.0, TAU, 32, Color(1, 1, 0.85), 1.5 * hs)
 			ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
 
 static func is_female(skin_id: String) -> bool:
 	return bool(SKINS[skin_index(skin_id)].get("female", false))

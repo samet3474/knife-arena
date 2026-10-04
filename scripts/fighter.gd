@@ -9,7 +9,6 @@ const BODY_RADIUS := 28.0
 const MAX_KNIVES := 60
 const BASE_SPEED := 335.0
 const SPRITE_SIZE := 98.0
-const ACC_SCALE := SPRITE_SIZE / 84.0 # seviye eşyaları 84 piksellik karaktere göre çizilir
 const MAGNET_RADIUS := 280.0
 const WALK_FPS := 12.0
 const DASH_SPEED := 950.0
@@ -315,7 +314,7 @@ func _draw_body() -> void:
 	draw_arc(Vector2.ZERO, BODY_RADIUS * 1.15, 0.0, TAU, 40, Color(color, 0.9), 5.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if accessory > 0 and not concealed:
-		GameData.draw_accessory(self, accessory, Vector2(0, -5), ACC_SCALE, idle_time, true)
+		_draw_acc(self, true)
 
 	# Hız ayakkabısı / hız güçlendirmesi: ayaklarda çırpınan altın kanatçıklar
 	if speed_t > 0.0:
@@ -341,6 +340,15 @@ func _draw_body() -> void:
 		_draw_knives(false, self)
 
 
+## Seviye eşyası: karakter görselinin o anki konumu/boyu/yönüyle (zıplama ve aynalama dahil).
+func _draw_acc(ci: CanvasItem, back: bool) -> void:
+	if body == null:
+		return
+	var mirror := signf(body.scale.x) if body.scale.x != 0.0 else 1.0
+	GameData.draw_accessory(ci, accessory, skin_id, body.position, SPRITE_SIZE * body.scale.y / _base_scale, mirror,
+		idle_time, back)
+
+
 func _draw_overlay() -> void:
 	var _pt := Time.get_ticks_usec()
 	_draw_overlay_body()
@@ -351,7 +359,7 @@ func _draw_overlay_body() -> void:
 	if not alive:
 		return
 	if accessory > 0 and not concealed:
-		GameData.draw_accessory(overlay, accessory, Vector2(0, -5), ACC_SCALE, idle_time, false)
+		_draw_acc(overlay, false)
 	if knives > 0:
 		_draw_knives(true, overlay)
 
