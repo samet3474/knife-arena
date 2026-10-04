@@ -426,6 +426,18 @@ func _draw_overlay_body() -> void:
 	GameData.disc(overlay, badge, 11.0, Color(1, 0.85, 0.3))
 	GameData.disc(overlay, badge, 9.0, Color(0.1, 0.12, 0.2))
 	overlay.draw_string(font, badge + Vector2(-10, 5), str(level), HORIZONTAL_ALIGNMENT_CENTER, 20, 12, Color.WHITE)
+	# Bıçak sayısı ismin üstünde (Knife.io'daki gibi; herkes rakibin gücünü görsün). Sınırsız bıçakta ∞
+	var cy := top - 20.0
+	if inf_t > 0.0:
+		GameData.draw_infinity(overlay, Vector2(-6, cy - 6), 0.55, Color(0.4, 0.95, 1))
+		KnifeArt.draw(overlay, Vector2(14, cy - 6), 0.35, 0.42, knife_kind, false)
+	else:
+		var count := str(knives)
+		var cw := font.get_string_size(count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+		var cx := -(cw + 16.0) / 2.0
+		overlay.draw_string_outline(font, Vector2(cx, cy), count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, 5, Color(0, 0, 0, 0.75))
+		overlay.draw_string(font, Vector2(cx, cy), count, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color.WHITE)
+		KnifeArt.draw(overlay, Vector2(cx + cw + 9, cy - 6), 0.35, 0.42, knife_kind, false)
 
 	var ratio := clampf(hp / max_hp, 0.0, 1.0)
 	overlay.draw_rect(Rect2(-29, top + 5, 58, 8), Color(0, 0, 0, 0.6))
