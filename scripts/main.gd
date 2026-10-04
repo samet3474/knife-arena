@@ -135,7 +135,7 @@ var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
 var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
 var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
-const NET_VERSION := 6
+const NET_VERSION := 7
 var name_taken := "" # sunucunun "başkasına ait" dediği isim (değiştirilene kadar)
 var host_override := ""
 var srv_load_acc := 0 # sunucu: ölçüm penceresindeki toplam süre (mikro sn)
@@ -314,6 +314,10 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--knife=") and player != null:
 			player.knife_kind = a.trim_prefix("--knife=").to_int()
 			player.knives = 16
+		if a.begins_with("--skin=") and player != null:
+			player.skin_id = a.trim_prefix("--skin=")
+			player.face_dir = int(GameData.SKINS[GameData.skin_index(player.skin_id)]["face"])
+			player._setup_sprite()
 		if a.begins_with("--chat-say="):
 			test_chat = a.trim_prefix("--chat-say=").replace("_", " ")
 		if a.begins_with("--lb-mode="):

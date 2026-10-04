@@ -19,6 +19,18 @@ static func draw(ci: CanvasItem, pos: Vector2, rot: float, s: float = 1.0, kind:
 		tint = info["color"]
 	elif info["tex"] == "knife":
 		tint = info["color"]
+	var frames := int(info.get("anim", 0))
+	var sheet := GameData.tex(info["tex"] + "_anim") if frames > 1 else null
+	if sheet != null:
+		# Kareli animasyon (zamana göre kare seçilir)
+		var fw := sheet.get_width() / float(frames)
+		var fi := int(Time.get_ticks_msec() / 90.0) % frames
+		var sc2 := SPRITE_HEIGHT / sheet.get_height() * s
+		ci.draw_set_transform(pos, rot, Vector2(sc2, sc2))
+		var sz := Vector2(fw, sheet.get_height())
+		ci.draw_texture_rect_region(sheet, Rect2(-sz / 2.0, sz), Rect2(Vector2(fi * fw, 0), sz))
+		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
 	if t != null:
 		var sc := SPRITE_HEIGHT / t.get_height() * s
 		ci.draw_set_transform(pos, rot, Vector2(sc, sc))

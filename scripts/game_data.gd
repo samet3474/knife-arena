@@ -20,6 +20,7 @@ const SKINS := [
 	{"id": "skin_gokturk", "price": 700, "level": 14, "face": 0, "color": Color(0.3, 0.75, 0.95), "fx": "wind", "aura": Color(0.6, 1.0, 0.95)},
 	{"id": "skin_sultan", "price": 900, "level": 18, "face": 0, "color": Color(1.0, 0.8, 0.25), "fx": "gold", "aura": Color(1.0, 0.8, 0.25)},
 	{"id": "skin_lale", "price": 250, "level": 3, "face": 0, "color": Color(1.0, 0.42, 0.72), "female": true, "fx": "heart", "aura": Color(1.0, 0.45, 0.75)},
+	{"id": "skin_akinci", "price": 480, "level": 8, "face": 1, "color": Color(0.85, 0.15, 0.15), "fx": "ember", "aura": Color(1.0, 0.45, 0.2)},
 ]
 
 ## Bıçak türleri (görsel). tex: sprite adı; yoksa çelik bıçak "color" ile boyanır.
@@ -36,6 +37,8 @@ const KNIVES := [
 	# female: yalnızca kadın karakterlerle kullanılabilir
 	{"id": "knife_heart", "tex": "knife_heart", "color": Color(1, 0.45, 0.75), "glow": Color(1, 0.35, 0.7, 0.55), "fx": "heart", "price": 180, "level": 3, "female": true},
 	{"id": "knife_rose", "tex": "knife_rose", "color": Color(1, 0.3, 0.4), "glow": Color(1, 0.3, 0.45, 0.5), "fx": "petal", "price": 380, "level": 7, "female": true},
+	# anim: <tex>_anim.png yan yana kareli animasyon (kare sayısı)
+	{"id": "knife_blueflame", "tex": "knife_blueflame", "anim": 8, "color": Color(0.5, 0.85, 1), "glow": Color(0.3, 0.7, 1, 0.6), "fx": "ice", "price": 650, "level": 12},
 ]
 
 ## Seviye eşyaları: satın alınmaz, seviyeye ulaşınca açılır. Karakterin üstüne/arkasına çizilir.
