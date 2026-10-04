@@ -187,11 +187,27 @@ func _setup_fonts() -> void:
 		base.fallbacks = extra
 
 
+## Bilgisayarda pencere ekrana sığmıyorsa (ör. 1366x768 ekran) başlık çubuğu ekranın dışına taşar ve
+## küçült/büyüt/kapat düğmeleri görünmez. Bu durumda pencere ekranı kaplayan (büyütülmüş) moda alınır.
+func _fit_window() -> void:
+	if OS.has_feature("web") or OS.has_feature("mobile") or DisplayServer.get_name() == "headless":
+		return
+	if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+		return
+	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
+	var size := DisplayServer.window_get_size()
+	# Başlık çubuğu için ~40 piksel pay
+	if size.y + 40 > usable.size.y or size.x > usable.size.x:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+
+
 func _ready() -> void:
 	randomize()
 	var args := OS.get_cmdline_user_args()
 	if not "--server" in args:
 		_setup_fonts()
+		if not "--screenshot" in " ".join(args):
+			_fit_window.call_deferred()
 	# Web sürümünde test seçenekleri adres çubuğundan verilebilir: ?autostart&lowfx
 	if OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("window.location.search", true)
@@ -809,6 +825,8 @@ func _toggle_fullscreen() -> void:
 		return
 	var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	if full:
+		_fit_window.call_deferred() # tam ekrandan çıkınca pencere yine ekrana sığsın
 
 
 func cycle_skin(step: int) -> void:
@@ -831,6 +849,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if key == null or not key.pressed or key.echo:
 		return
 	match key.keycode:
+		KEY_F11:
+			_toggle_fullscreen()
+			return
 		KEY_SHIFT:
 			if state == "playing":
 				player_dash()
