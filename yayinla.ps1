@@ -17,6 +17,7 @@ New-Item -ItemType Directory -Force "$proj\build\web" | Out-Null
 if (Test-Path "$proj\docs") { Remove-Item "$proj\docs" -Recurse -Force }
 Copy-Item "$proj\build\web" "$proj\docs" -Recurse
 New-Item -ItemType File "$proj\docs\.nojekyll" -Force | Out-Null
+New-Item -ItemType File "$proj\docs\.gdignore" -Force | Out-Null # Godot bu klasörü proje dosyası sanmasın
 
 # Telefon ayarları: ana ekrana ekleyince tam ekran, ekran yoğunluğu sınırı (iPhone'da akıcılık)
 $head = @"
