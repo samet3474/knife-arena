@@ -685,6 +685,20 @@ func on_button(id: String) -> void:
 			_start_round(true)
 			return
 		"mp":
+			# Sunucunun durumu biliniyorsa boşuna bağlanmaya çalışma
+			match lobby_state:
+				"offline":
+					hud.flash_banner(Loc.t("mp_offline"), Color(1, 0.5, 0.4), 3.5)
+					sfx.play("error", 0.0, 0.0)
+					fetch_leaderboard(true)
+					return
+				"outdated":
+					hud.flash_banner(Loc.t("mp_outdated"), Color(1, 0.6, 0.3), 3.5)
+					sfx.play("error", 0.0, 0.0)
+					return
+				"connecting":
+					hud.flash_banner(Loc.t("mp_wait"), Color(1, 0.85, 0.3), 3.0)
+					return
 			sfx.play("click", 0.0, 0.0)
 			_mp_connect()
 			return
@@ -2204,6 +2218,7 @@ func server_top_request(info: Dictionary) -> void:
 func top_lists() -> Dictionary:
 	var out := {}
 	var all: Array = records.values()
+	out["online"] = peers.size()
 	for stat in ["sk", "sc", "mk", "mc", "l"]:
 		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get(stat, 0)) > int(b.get(stat, 0)))
 		var rows := []
@@ -2404,11 +2419,14 @@ func _join_info() -> Dictionary:
 
 ## Lobi bağlantısı: ana menü açıkken sunucuya açık kalan hafif bağlantı (oyuna girilmez).
 ## Skor tablosu bununla çekilir ve genel sohbet bununla akar. Uyuyan ücretsiz sunucuyu da uyandırır.
-const LB_REFRESH := 60.0
+const LB_REFRESH := 20.0
 const LB_TIMEOUT := 75.0
 const LOBBY_RETRY := 20.0
 var lb_fetching := false # lobi bağlantısı açık ya da açılıyor
-var lobby_online := false # lobi bağlantısı kuruldu
+var lobby_online := false # sunucu cevap verdi (skor tablosu geldi): sohbet ve çok oyunculu hazır
+var lobby_state := "" # "" | connecting | ready | offline | outdated (menüde gösterilir)
+var lobby_connected_at := -1.0
+var online_count := 0 # sunucuya göre arenadaki oyuncu sayısı
 var lb_started := 0.0
 var lobby_retry_at := 0.0
 var chat: Array = [] # istemci: genel sohbet mesajları [{"n", "m"}]
@@ -2431,8 +2449,12 @@ func fetch_leaderboard(force := false) -> void:
 		return
 	lb_fetching = true
 	lb_started = now
+	lobby_connected_at = -1.0
+	if lobby_state != "ready":
+		lobby_state = "connecting"
 	if net.connect_to(_mp_host()) != OK:
 		_stop_lb_fetch()
+		lobby_state = "offline"
 
 
 func _stop_lb_fetch() -> void:
@@ -2458,7 +2480,13 @@ func _lobby_tick() -> void:
 		return
 	if lb_fetching and not lobby_online and now - lb_started > LB_TIMEOUT:
 		_stop_lb_fetch()
+		lobby_state = "offline"
 		lobby_retry_at = now + LOBBY_RETRY
+	# Bağlandı ama sunucu cevap vermiyor: sunucu eski sürümde (güncelleniyor)
+	if lb_fetching and not lobby_online and lobby_connected_at >= 0.0 and now - lobby_connected_at > 10.0:
+		_stop_lb_fetch()
+		lobby_state = "outdated"
+		lobby_retry_at = now + 60.0
 	if not lb_fetching and now >= lobby_retry_at:
 		fetch_leaderboard(true)
 	elif lobby_online:
@@ -2466,6 +2494,10 @@ func _lobby_tick() -> void:
 
 
 func client_top(data: Dictionary) -> void:
+	if lb_fetching and net_mode == "":
+		lobby_online = true
+		lobby_state = "ready"
+	online_count = int(data.get("online", 0))
 	save["top"] = data
 	lb_fetched_at = Time.get_ticks_msec() / 1000.0
 	_write_save()
@@ -2495,14 +2527,15 @@ func send_chat(text: String) -> void:
 		hud.flash_banner(Loc.t("chat_need_name"), Color(1, 0.6, 0.3), 3.0)
 		return
 	if not lobby_online:
-		hud.flash_banner(Loc.t("chat_offline"), Color(1, 0.6, 0.3), 3.0)
+		var key := "mp_wait" if lobby_state in ["", "connecting"] else ("mp_outdated" if lobby_state == "outdated" else "chat_offline")
+		hud.flash_banner(Loc.t(key), Color(1, 0.6, 0.3), 3.0)
 		return
 	net.c_chat.rpc_id(1, String(save["player_name"]).strip_edges(), text)
 
 
 func _on_net_connected() -> void:
 	if lb_fetching and net_mode == "":
-		lobby_online = true
+		lobby_connected_at = Time.get_ticks_msec() / 1000.0
 		lb_fetched_at = Time.get_ticks_msec() / 1000.0
 		net.c_top.rpc_id(1, _top_info())
 		net.c_chat_join.rpc_id(1, String(save["player_name"]).strip_edges())
@@ -2518,6 +2551,7 @@ func _on_net_connected() -> void:
 func _on_net_failed() -> void:
 	if lb_fetching and net_mode == "":
 		_stop_lb_fetch()
+		lobby_state = "offline"
 		lobby_retry_at = Time.get_ticks_msec() / 1000.0 + LOBBY_RETRY
 		return
 	if net_mode != "client":

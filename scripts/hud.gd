@@ -25,7 +25,7 @@ var tab := "characters" # characters | knives | levels
 var popup := "" # "" | shop | settings (menüde açılır pencere)
 var shop_preview := "" # koleksiyonda önizlenen kartın id'si
 var scoreboard_open := false
-var lb_tab := "sk" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
+var lb_tab := "l" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
 var lb_mode := "mp" # sp (tek oyunculu) | mp (çok oyunculu)
 var banner_text := ""
 var banner_time := 0.0
@@ -199,7 +199,11 @@ func _process(delta: float) -> void:
 		name_edit.release_focus()
 	chat_edit.visible = in_menu and popup == ""
 	if chat_edit.visible:
-		chat_edit.placeholder_text = Loc.t("chat_placeholder")
+		# İsim yazılmadan sohbete yazılamaz: kutu kilitli ve ne yapılacağını söyler
+		var has_name := String(main.save["player_name"]).strip_edges() != ""
+		chat_edit.editable = has_name
+		chat_edit.focus_mode = Control.FOCUS_ALL if has_name else Control.FOCUS_NONE
+		chat_edit.placeholder_text = Loc.t("chat_placeholder") if has_name else Loc.t("chat_name_hint")
 		var cr := _chat_rect(_screen())
 		chat_edit.position = Vector2(cr.position.x + 8, cr.end.y - 46)
 		chat_edit.size = Vector2(cr.size.x - 66, 38)
@@ -917,11 +921,12 @@ func _chat_rect(s: Vector2) -> Rect2:
 func _draw_chat(r: Rect2) -> void:
 	_panel(r, PANEL_BG, Color(0.45, 0.75, 1, 0.35), 16, 1)
 	var online: bool = main.lobby_online
-	GameData.disc(cv, r.position + Vector2(18, 21), 5.0, Color(0.3, 1, 0.4) if online else Color(1, 0.6, 0.3))
+	var st := _server_status()
+	GameData.disc(cv, r.position + Vector2(18, 21), 5.0, Color(0.3, 1, 0.4) if online else st[1])
 	_text(Vector2(r.position.x + 30, r.position.y + 27), Loc.t("chat_title"), 16, Color(0.6, 0.85, 1))
+	var note := ""
 	if not online:
-		_text(Vector2(r.position.x, r.position.y + 26), Loc.t("chat_connecting"), 11, Color(1, 1, 1, 0.45),
-			HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0)
+		note = st[0] if main.lobby_state != "" else Loc.t("chat_connecting")
 	# Yazma kutusu ve gönder butonu (kutu LineEdit olarak _process'te konumlanır)
 	_button(Rect2(r.end.x - 50, r.end.y - 46, 42, 38), "chat_send", ">", Color(0.28, 0.42, 0.88), true, 20)
 	# Mesajlar: en yenisi altta
@@ -931,9 +936,15 @@ func _draw_chat(r: Rect2) -> void:
 	var y := r.end.y - 56.0
 	var top := r.position.y + 40.0
 	var msgs: Array = main.chat
-	if msgs.is_empty():
-		_text(Vector2(r.position.x + 12, y), Loc.t("chat_empty"), 13, Color(1, 1, 1, 0.4), HORIZONTAL_ALIGNMENT_CENTER, width)
-		return
+	if msgs.is_empty() or note != "":
+		# Boş ya da bağlantı yok: ortada açıklama (sunucu durumu ya da ilk mesaj daveti)
+		var info := note if note != "" else Loc.t("chat_empty")
+		var lines := _wrap(info, 13, width - 10.0)
+		var cy := r.get_center().y - lines.size() * 9.0
+		for k in lines.size():
+			_text(Vector2(r.position.x + 12, cy + k * 18.0), lines[k], 13, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_CENTER, width)
+		if note != "" or msgs.is_empty():
+			return
 	var me := String(main.save["player_name"]).strip_edges().to_lower()
 	for i in range(msgs.size() - 1, -1, -1):
 		var m: Dictionary = msgs[i]
@@ -974,8 +985,8 @@ func _wrap(text: String, size: int, width: float) -> PackedStringArray:
 
 ## Skor tablosu kategorileri: mod → [istatistik anahtarı, başlık, kayıttaki karşılığı, renk]
 const LB_TABS := {
-	"sp": [["sk", "lb_kills", "sp_kills"], ["l", "lb_level", "level"], ["sc", "lb_coins", "sp_coins"]],
-	"mp": [["mk", "lb_kills", "mp_kills"], ["l", "lb_level", "level"], ["mc", "lb_coins", "mp_coins"]],
+	"sp": [["l", "lb_level", "level"], ["sk", "lb_kills", "sp_kills"], ["sc", "lb_coins", "sp_coins"]],
+	"mp": [["l", "lb_level", "level"], ["mk", "lb_kills", "mp_kills"], ["mc", "lb_coins", "mp_coins"]],
 }
 const MEDALS := [Color(1, 0.82, 0.25), Color(0.82, 0.85, 0.92), Color(0.86, 0.55, 0.3)]
 
@@ -1044,7 +1055,8 @@ func _draw_leaderboard(r: Rect2) -> void:
 		var row: Array = rows[idx]
 		var rr := Rect2(r.position.x + 8, y0 + i * rh, r.size.x - 16, rh - 4.0)
 		var mine: bool = row[2]
-		var podium := idx < 3
+		# Sunucudan liste gelmeden (yalnızca kendin) taç / madalya gösterilmez
+		var podium: bool = idx < 3 and not top.get(lb_tab, []).is_empty()
 		var bg := Color(MEDALS[idx], 0.16) if podium else Color(1, 1, 1, 0.04 if i % 2 == 0 else 0.02)
 		var border := Color(MEDALS[idx], 0.55) if podium else Color(0, 0, 0, 0)
 		if mine:
@@ -1053,7 +1065,7 @@ func _draw_leaderboard(r: Rect2) -> void:
 		_panel(rr, bg, border, 10, 2 if mine else (1 if podium else 0))
 		var rc := rr.position + Vector2(20, rr.size.y / 2.0)
 		var fs := int(minf(17.0 if podium else 15.0, rh * 0.48))
-		if idx == 0:
+		if idx == 0 and podium:
 			_draw_crown_icon(rc + Vector2(0, 1), 0.85)
 		elif podium:
 			_draw_medal(rc, minf(11.0, rh * 0.3), MEDALS[idx], idx + 1)
@@ -1066,12 +1078,12 @@ func _draw_leaderboard(r: Rect2) -> void:
 		_text(Vector2(rr.position.x, rc.y + fs * 0.36), val, fs, vcol, HORIZONTAL_ALIGNMENT_RIGHT, rr.size.x - 10.0)
 	# Hedef: ilk üçe girmek için gereken fark
 	var goal := ""
-	if rows.size() > 3 and my_rank >= 3:
+	if top.get(lb_tab, []).is_empty():
+		goal = Loc.t("lb_empty")
+	elif rows.size() > 3 and my_rank >= 3:
 		goal = Loc.t("lb_goal") % (int(rows[2][1]) - my_val + 1)
 	elif my_rank < 3 and my_val > 0:
 		goal = Loc.t("lb_podium")
-	elif top.is_empty():
-		goal = Loc.t("lb_empty")
 	if goal != "":
 		_text(Vector2(r.position.x + 10, r.end.y - 12), goal, _fit_size(goal, 13, r.size.x - 20.0), Color(1, 1, 1, 0.6),
 			HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 20.0)
@@ -1099,6 +1111,20 @@ func _draw_medal(c: Vector2, r: float, col: Color, rank: int) -> void:
 	var fs := int(r * 1.15)
 	_text(Vector2(c.x - r, c.y + r * 0.15 + fs * 0.36), str(rank), fs, Color(0.15, 0.12, 0.1), HORIZONTAL_ALIGNMENT_CENTER, r * 2.0)
 
+## Çok oyunculu sunucusunun durumu: [yazı, renk].
+func _server_status() -> Array:
+	match String(main.lobby_state):
+		"ready":
+			return [Loc.t("srv_online") % int(main.online_count), Color(0.55, 1, 0.6)]
+		"offline":
+			return [Loc.t("srv_offline"), Color(1, 0.55, 0.45)]
+		"outdated":
+			return [Loc.t("srv_outdated"), Color(1, 0.75, 0.35)]
+		"connecting":
+			return [Loc.t("srv_waking"), Color(1, 0.85, 0.4)]
+	return [Loc.t("mode_multi_sub"), Color(1, 1, 1, 0.8)]
+
+
 ## Alt orta: iki büyük mod butonu (başlık + açıklama).
 func _draw_mode_buttons(s: Vector2, t: float) -> void:
 	var w := minf(330.0, (s.x - 80.0) / 2.0)
@@ -1116,8 +1142,18 @@ func _draw_mode_buttons(s: Vector2, t: float) -> void:
 		_button(r, m[0], "", col, true, 16)
 		_text(Vector2(r.position.x, r.position.y + 46), m[1], _fit_size(m[1], 30, r.size.x - 24.0), Color.WHITE,
 			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
-		_text(Vector2(r.position.x, r.position.y + 72), m[2], _fit_size(m[2], 14, r.size.x - 24.0), Color(1, 1, 1, 0.8),
-			HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		var sub: String = m[2]
+		var sub_col := Color(1, 1, 1, 0.8)
+		var sub_fs := _fit_size(sub, 14, r.size.x - 40.0)
+		if m[0] == "mp":
+			# Çok oyunculu: sunucunun anlık durumu (açık / uyanıyor / kapalı / güncelleniyor), başında renkli nokta
+			var st := _server_status()
+			sub = st[0]
+			sub_col = st[1]
+			sub_fs = _fit_size(sub, 14, r.size.x - 40.0)
+			var sw := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, sub_fs).x
+			GameData.disc(cv, Vector2(r.get_center().x - sw / 2.0 - 12.0, r.position.y + 67), 5.0, sub_col)
+		_text(Vector2(r.position.x, r.position.y + 72), sub, sub_fs, sub_col, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 
 
 # --- Koleksiyon penceresi (karakterler / bıçaklar / seviyeler) -------------------
