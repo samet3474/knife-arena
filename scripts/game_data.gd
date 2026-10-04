@@ -232,27 +232,48 @@ static func body_info(skin_id: String) -> Dictionary:
 				img.decompress()
 			var h := img.get_height()
 			var w := h if sheet != null else img.get_width()
+			# Her satırın dolu kısmı (en sol / en sağ opak piksel)
+			var row_l := PackedInt32Array()
+			var row_r := PackedInt32Array()
+			var widest := 0
 			var top := -1
 			var bottom := -1
 			for y in h:
+				var l := -1
+				var r := -1
 				for x in w:
 					if img.get_pixel(x, y).a > 0.5:
-						if top < 0:
-							top = y
-						bottom = y
-						break
+						if l < 0:
+							l = x
+						r = x
+				row_l.append(l)
+				row_r.append(r)
+				if l >= 0:
+					if top < 0:
+						top = y
+					bottom = y
+					widest = maxi(widest, r - l + 1)
 			if top >= 0:
-				# Kafa: üstten yüksekliğin %20'si kadar satırın yatay genişliği
-				var head_end := top + maxi(2, int((bottom - top) * 0.2))
-				var minx := w
-				var maxx := -1
-				for y in range(top, head_end + 1):
-					for x in w:
-						if img.get_pixel(x, y).a > 0.5:
-							minx = mini(minx, x)
-							maxx = maxi(maxx, x)
-				info = {"top": float(top) / h, "bottom": float(bottom + 1) / h,
-					"cx": (minx + maxx + 1) / 2.0 / w, "hw": maxf(2.0, (maxx - minx + 1) / 2.0) / w}
+				# Kafanın tepesi: başın üstündeki ince süsleri (fiyonk, tüy, sivri uç) atla;
+				# genişliği karakterin en geniş yerinin %30'unu geçen ilk satır
+				var head_top := top
+				for y in range(top, bottom + 1):
+					if row_l[y] >= 0 and row_r[y] - row_l[y] + 1 >= widest * 0.3:
+						head_top = y
+						break
+				# Kafa genişliği: tepeden itibaren birkaç satırın ortalama genişliği (uzun saç taşmasın)
+				var rows := maxi(2, int((bottom - top) * 0.12))
+				var sum_w := 0.0
+				var sum_c := 0.0
+				var n := 0
+				for y in range(head_top, mini(bottom, head_top + rows) + 1):
+					if row_l[y] >= 0:
+						sum_w += row_r[y] - row_l[y] + 1
+						sum_c += (row_l[y] + row_r[y] + 1) / 2.0
+						n += 1
+				n = maxi(n, 1)
+				info = {"top": float(head_top) / h, "bottom": float(bottom + 1) / h,
+					"cx": sum_c / n / w, "hw": maxf(2.0, sum_w / n / 2.0) / w}
 	_body_info[skin_id] = info
 	return info
 
@@ -271,7 +292,7 @@ static func draw_accessory(ci: CanvasItem, kind: int, skin_id: String, center: V
 	var head := Vector2(head_x, center.y + (float(b["top"]) - 0.5) * size)
 	var feet := Vector2(center.x, center.y + (float(b["bottom"]) - 0.5) * size)
 	# Taç ve hale kafanın genişliğine göre ölçeklenir
-	var hs := clampf(float(b["hw"]) * size * 2.0 / 30.0, s * 0.85, s * 1.25)
+	var hs := clampf(float(b["hw"]) * size * 2.0 / 30.0, s * 0.85, s * 1.1)
 	match id:
 		"acc_aura":
 			if not back:
