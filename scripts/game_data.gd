@@ -86,6 +86,7 @@ const MYSTERY := [
 	{"id": "coins", "good": true, "weight": 18},
 	{"id": "powerup", "good": true, "weight": 16},
 	{"id": "rage", "good": true, "weight": 9},
+	{"id": "shoes", "good": true, "weight": 13},
 	{"id": "bomb", "good": false, "weight": 14},
 	{"id": "slow", "good": false, "weight": 8},
 	{"id": "thief", "good": false, "weight": 7},

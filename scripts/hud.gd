@@ -628,8 +628,13 @@ func _draw_server(s: Vector2) -> void:
 		_text(Vector2(st.position.x, y), stats[i][1], 16, GOLD, HORIZONTAL_ALIGNMENT_RIGHT, st.size.x - 16)
 
 	# Arena kontrolleri
-	var ct := Rect2(lx, 320, lw, 128)
+	var ct := Rect2(lx, 320, lw, 184)
 	_panel(ct, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
+	# Alan daralması aç / kapat
+	var zone_on: bool = d.get("zone", false)
+	var ztxt := "ALAN DARALMASI: AÇIK (%d)" % int(d.get("zone_r", 0)) if zone_on else "ALAN DARALMASI: KAPALI"
+	_button(Rect2(ct.position.x + 12, ct.position.y + 122, ct.size.x - 24, 50), "adm_zone", ztxt,
+		Color(0.75, 0.2, 0.25) if zone_on else Color(0.3, 0.36, 0.45), true, 16)
 	_text(Vector2(ct.position.x + 16, ct.position.y + 30), "Bot sayısı", 17, Color.WHITE)
 	_text(Vector2(ct.position.x + 16, ct.position.y + 48), "(yalnızca ÇOK OYUNCULU arenası)", 11, Color(1, 1, 1, 0.45))
 	_button(Rect2(ct.end.x - 160, ct.position.y + 8, 48, 42), "adm_bot_minus", "-", Color(0.55, 0.25, 0.25), true, 24)
@@ -639,7 +644,7 @@ func _draw_server(s: Vector2) -> void:
 	_button(Rect2(ct.end.x - 194, ct.position.y + 66, 182, 48), "adm_event", "OLAY BAŞLAT", Color(0.75, 0.55, 0.12), true, 15)
 
 	# Olay günlüğü
-	var lg := Rect2(lx, 462, lw, s.y - 482)
+	var lg := Rect2(lx, 518, lw, s.y - 538)
 	_panel(lg, PANEL_BG, Color(1, 1, 1, 0.08), 16, 1)
 	_text(Vector2(lg.position.x + 16, lg.position.y + 26), "Günlük (giren / çıkan / leşler)", 15, GOLD)
 	var log: Array = d.get("log", [])

@@ -115,6 +115,7 @@ const TEXT := {
 	"box_knives": ["+8 BIÇAK!", "+8 KNIVES!"],
 	"box_coins": ["HAZİNE!", "TREASURE!"],
 	"box_rage": ["ÖFKE! x1.6 HASAR", "RAGE! x1.6 DAMAGE"],
+	"box_shoes": ["HIZ AYAKKABISI! 9 SN", "SPEED SHOES! 9 SEC"],
 	"box_bomb": ["BOMBA! KAÇ!", "BOMB! RUN!"],
 	"box_slow": ["YAVAŞLADIN!", "SLOWED!"],
 	"box_thief": ["HIRSIZ! -4 BIÇAK", "THIEF! -4 KNIVES"],

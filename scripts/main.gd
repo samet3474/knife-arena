@@ -25,7 +25,9 @@ const PICKUP_TARGET := 150
 const PICKUP_RADIUS := 42.0
 const POWERUP_MAX := 6
 const POWERUP_RADIUS := 46.0
-const START_KNIVES := 4
+const START_KNIVES := 5
+const SPAWN_SHIELD := 4.0 # yeni doğan oyuncunun koruma süresi (sn)
+const SHOES_TIME := 9.0 # gizemli kutudan çıkan hız ayakkabısının süresi (sn)
 const THROW_SPEED := 1150.0
 const THROW_LIFE := 0.8
 const THROW_DAMAGE := 22.0
@@ -66,6 +68,10 @@ var coins_pickups: Array[Dictionary] = []
 var player_target: Fighter = null
 var cooldowns := {}
 var zone_radius := ARENA_RADIUS
+var zone_on := false # sunucu: yönetici alan daralmasını açtı mı
+var zone_start := 0.0
+const ZONE_MP_DURATION := 120.0
+const ZONE_MP_MIN := 650.0
 var zone_announced := false
 var round_time := 0.0
 var state := "menu" # splash | menu | connecting | playing | paused | over | won | server
@@ -566,6 +572,7 @@ func _start_round(with_player: bool) -> void:
 		player = _spawn_fighter(player_name(), skin["id"], skin["color"], true)
 		player.knife_kind = selected_knife()
 		player.accessory = selected_acc()
+		player.shield_t = SPAWN_SHIELD
 	var names := BOT_NAMES.duplicate()
 	names.shuffle()
 	for i in BOT_COUNT:
@@ -1242,6 +1249,9 @@ func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 		"rage":
 			if opener != null:
 				opener.rage_t = 7.0
+		"shoes":
+			if opener != null:
+				opener.speed_t = maxf(opener.speed_t, SHOES_TIME)
 		"bomb":
 			hazards.append({"kind": "bomb", "pos": pos, "t": 1.1, "owner": opener.get_instance_id() if opener != null else 0})
 		"slow":
@@ -1910,6 +1920,13 @@ func _server_process(delta: float) -> void:
 	if round_time >= next_event_time:
 		next_event_time = round_time + randf_range(35.0, 50.0)
 		_arena_event()
+	# Alan daralması (yönetici panelinden açılıp kapatılır): açıkken yavaşça daralır,
+	# kapatılınca alan yeniden genişler
+	if zone_on:
+		var zt := clampf((round_time - zone_start) / ZONE_MP_DURATION, 0.0, 1.0)
+		zone_radius = lerpf(ARENA_RADIUS, ZONE_MP_MIN, zt)
+	else:
+		zone_radius = move_toward(zone_radius, ARENA_RADIUS, 250.0 * delta)
 	_simulate(delta)
 	_check_deaths()
 	_maintain_world(delta)
@@ -1961,6 +1978,7 @@ func server_join(peer: int, info: Dictionary) -> void:
 			dead_since[old.net_id] = round_time
 	var f := _spawn_fighter(fname, skin["id"], skin["color"], false)
 	f.peer_id = peer
+	f.shield_t = SPAWN_SHIELD # doğar doğmaz öldürülmesin
 	f.knife_kind = clampi(int(info.get("knife", 0)), 0, GameData.KNIVES.size() - 1)
 	if not knife_allowed(f.knife_kind, f.skin_id):
 		f.knife_kind = 0
@@ -2074,6 +2092,12 @@ func slog(text: String, col := Color.WHITE) -> void:
 func _admin(id: String) -> void:
 	if id == "adm_reset":
 		_server_reset_arena()
+	elif id == "adm_zone":
+		zone_on = not zone_on
+		# Kaldığı yerden devam etsin (alan genişlerken açılırsa sıçrama olmasın)
+		var zt := clampf(inverse_lerp(ARENA_RADIUS, ZONE_MP_MIN, zone_radius), 0.0, 1.0)
+		zone_start = round_time - zt * ZONE_MP_DURATION
+		slog("Alan daralması: %s" % ("AÇIK" if zone_on else "KAPALI"), Color(1, 0.5, 0.45))
 	elif id == "adm_bot_plus":
 		bot_target = mini(bot_target + 1, 20)
 		slog("Bot hedefi: %d" % bot_target, Color(0.8, 0.8, 1))
@@ -2161,7 +2185,7 @@ func _build_snapshot() -> Dictionary:
 	var j := []
 	for pr in projectiles:
 		j.append([pr["pos"], pr["vel"], pr["kind"]])
-	return {"f": f_rows, "p": p, "c": c, "k": k, "u": u, "h": h, "j": j, "e": events.duplicate()}
+	return {"f": f_rows, "p": p, "c": c, "k": k, "u": u, "h": h, "j": j, "e": events.duplicate(), "z": zone_radius}
 
 
 # --- Çok oyunculu: istemci ------------------------------------------------------
@@ -2415,6 +2439,11 @@ func _client_snapshot_body(d: Dictionary) -> void:
 		projectiles.append({"pos": j[0], "vel": j[1], "kind": j[2], "life": 1.0})
 	for ev in d["e"]:
 		_present(ev)
+	var z := float(d.get("z", ARENA_RADIUS))
+	if z < ARENA_RADIUS - 1.0 and zone_radius >= ARENA_RADIUS - 1.0 and state == "playing":
+		sfx.play("zone", 0.0, 0.0)
+		hud.flash_banner(Loc.t("zone_alert"))
+	zone_radius = z
 
 
 func _client_process(delta: float) -> void:
@@ -2516,8 +2545,10 @@ func leaderboard(n: int) -> Array[Fighter]:
 
 
 func zone_status() -> String:
-	if state != "playing" or net_mode != "":
+	if state != "playing":
 		return ""
+	if net_mode != "":
+		return Loc.t("zone_shrink") if zone_radius < ARENA_RADIUS - 1.0 else ""
 	if round_time < ZONE_DELAY:
 		return Loc.t("zone_wait") % ceili(ZONE_DELAY - round_time)
 	if zone_radius > ZONE_MIN_RADIUS + 1.0:
@@ -2564,7 +2595,8 @@ func _update_camera(delta: float) -> void:
 		var target: Fighter = player if player != null and player.alive else _leader()
 		if target != null:
 			camera.position = target.position + target.move_dir * 70.0
-			z = clampf(1.05 - (target.ring_radius() - 60.0) * 0.006, 0.6, 1.05)
+			# Yakın kamera: karakterler telefonda büyük görünsün; halka büyüdükçe biraz uzaklaşır
+			z = clampf(1.22 - (target.ring_radius() - 60.0) * 0.0055, 0.72, 1.22)
 	camera.zoom = camera.zoom.lerp(Vector2(z, z), minf(1.0, 2.0 * delta))
 	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
 	shake = lerpf(shake, 0.0, minf(1.0, 9.0 * delta))
@@ -3052,6 +3084,7 @@ func admin_data() -> Dictionary:
 	return {
 		"uptime": now / 1000, "urls": server_urls, "players": players, "bots": bots, "bot_target": bot_target,
 		"alive": alive_count(), "joins": total_joins, "admins": admin_peers.size(), "log": server_log.slice(0, 30),
+		"zone": zone_on, "zone_r": int(zone_radius),
 	}
 
 

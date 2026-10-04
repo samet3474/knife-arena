@@ -23,15 +23,9 @@ var last_played := {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	# Web: HTTPS'te tarayıcının kendi ses motoru (Web Audio "sample") temiz ve takılmasız çalar.
-	# Yerel ağdaki düz HTTP'de bu kullanılamadığı için eski "stream" yöntemine düşülür.
-	var playback := AudioServer.PLAYBACK_TYPE_DEFAULT
-	if OS.has_feature("web"):
-		var secure = JavaScriptBridge.eval("window.isSecureContext && !!(window.AudioContext || window.webkitAudioContext)", true)
-		playback = AudioServer.PLAYBACK_TYPE_SAMPLE if secure == true else AudioServer.PLAYBACK_TYPE_STREAM
+	# Not: web'de "sample" oynatma telefonlarda sesi tamamen kesti; proje ayarındaki "stream" kullanılır.
 	for i in 16:
 		var p := AudioStreamPlayer.new()
-		p.playback_type = playback
 		add_child(p)
 		players.append(p)
 	for sound in VARIANTS:

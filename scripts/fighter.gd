@@ -6,9 +6,10 @@ extends Node2D
 
 const FLASH_SHADER := preload("res://shaders/flash.gdshader")
 const BODY_RADIUS := 28.0
-const MAX_KNIVES := 45
+const MAX_KNIVES := 60
 const BASE_SPEED := 335.0
-const SPRITE_SIZE := 84.0
+const SPRITE_SIZE := 98.0
+const ACC_SCALE := SPRITE_SIZE / 84.0 # seviye eşyaları 84 piksellik karaktere göre çizilir
 const MAGNET_RADIUS := 280.0
 const WALK_FPS := 12.0
 const DASH_SPEED := 950.0
@@ -111,7 +112,7 @@ func _setup_sprite() -> void:
 
 
 func ring_radius() -> float:
-	return BODY_RADIUS + 24.0 + mini(knives, MAX_KNIVES) * 1.3
+	return BODY_RADIUS + 32.0 + mini(knives, MAX_KNIVES) * 1.2
 
 
 func move_speed() -> float:
@@ -230,7 +231,7 @@ func _update_sprite() -> void:
 	var mirror := flip * face_dir if face_dir != 0 else 1.0
 	body.scale = Vector2(_base_scale * sx * mirror, _base_scale * sy)
 	body.modulate = Color(1.0, 0.75, 0.75) if rage_t > 0.0 else (Color(0.7, 0.8, 1.0) if slow_t > 0.0 else Color.WHITE)
-	body.position = Vector2(0, -10.0 - (breathe * 40.0))
+	body.position = Vector2(0, -16.0 - (breathe * 40.0))
 	body.rotation = 0.0
 	# Yürüme animasyonu olmayan karakterler için zıplayarak yürüme
 	if moving and _walk_frames == 1:
@@ -300,7 +301,7 @@ func _draw_body() -> void:
 			var local: Vector2 = a["pos"] - position
 			var alpha := float(a["life"]) / 0.25 * 0.45
 			var sz := Vector2(fw, fh) * _base_scale
-			var dst := Rect2(local + Vector2(0, -10) - sz / 2.0, sz)
+			var dst := Rect2(local + Vector2(0, -16) - sz / 2.0, sz)
 			draw_texture_rect_region(body.texture, dst, Rect2(int(a["frame"]) * fw, 0, fw, fh), Color(color.lightened(0.4), alpha))
 	if rage_t > 0.0:
 		var pulse := 0.5 + 0.5 * sin(idle_time * 10.0)
@@ -314,7 +315,17 @@ func _draw_body() -> void:
 	draw_arc(Vector2.ZERO, BODY_RADIUS * 1.15, 0.0, TAU, 40, Color(color, 0.9), 5.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if accessory > 0 and not concealed:
-		GameData.draw_accessory(self, accessory, Vector2.ZERO, 1.0, idle_time, true)
+		GameData.draw_accessory(self, accessory, Vector2(0, -5), ACC_SCALE, idle_time, true)
+
+	# Hız ayakkabısı / hız güçlendirmesi: ayaklarda çırpınan altın kanatçıklar
+	if speed_t > 0.0:
+		var flap := sin(idle_time * 18.0) * 0.35
+		for side in [-1.0, 1.0]:
+			var base := Vector2(14.0 * side, 26.0)
+			var pts := PackedVector2Array()
+			for v in [Vector2(0, 0), Vector2(14, -10), Vector2(10, -2), Vector2(16, 0), Vector2(8, 4)]:
+				pts.append(base + (v as Vector2).rotated(-flap * side) * Vector2(side, 1.0))
+			draw_colored_polygon(pts, Color(1, 0.85, 0.3, 0.9))
 
 	if speed_t > 0.0 and moving:
 		for i in 4:
@@ -340,7 +351,7 @@ func _draw_overlay_body() -> void:
 	if not alive:
 		return
 	if accessory > 0 and not concealed:
-		GameData.draw_accessory(overlay, accessory, Vector2.ZERO, 1.0, idle_time, false)
+		GameData.draw_accessory(overlay, accessory, Vector2(0, -5), ACC_SCALE, idle_time, false)
 	if knives > 0:
 		_draw_knives(true, overlay)
 
@@ -354,7 +365,7 @@ func _draw_overlay_body() -> void:
 	if concealed:
 		return
 	var font := ThemeDB.fallback_font
-	var top := -ring_radius() - 22.0 if knives > 0 else -BODY_RADIUS - 46.0
+	var top := -ring_radius() - 30.0 if knives > 0 else -BODY_RADIUS - 56.0
 	var name_col := Color(1, 0.92, 0.3) if is_player else Color.WHITE
 	overlay.draw_string_outline(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, 5, Color(0, 0, 0, 0.75))
 	overlay.draw_string(font, Vector2(-80, top), display_name, HORIZONTAL_ALIGNMENT_CENTER, 160, 18, name_col)
