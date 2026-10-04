@@ -34,6 +34,8 @@ var tab := "characters" # characters | knives | levels
 var popup := "" # "" | shop | settings (menüde açılır pencere)
 var shop_preview := "" # koleksiyonda önizlenen kartın id'si
 var scoreboard_open := false
+var bigmap_open := false # dokununca açılan büyük harita
+var _swipe_from := Vector2(-9999, -9999) # koleksiyonda kaydırma başlangıcı
 var lb_tab := "l" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
 var lb_mode := "mp" # sp (tek oyunculu) | mp (çok oyunculu)
 var banner_text := ""
@@ -224,6 +226,7 @@ func _process(delta: float) -> void:
 	if main.state != "playing":
 		joy_index = -1
 		throw_index = -1
+		bigmap_open = false
 	var in_menu: bool = main.state == "menu"
 	if not in_menu:
 		popup = ""
@@ -327,6 +330,15 @@ func _input(event: InputEvent) -> void:
 			dbg["last"] = event.position
 		elif event is InputEventMouseButton or event is InputEventMouseMotion:
 			dbg["mouse"] += 1
+	if event is InputEventScreenTouch and popup == "shop" and tab != "levels":
+		var st := event as InputEventScreenTouch
+		if st.pressed:
+			_swipe_from = st.position
+		elif _swipe_from.x > -1.0:
+			var dx := st.position.x - _swipe_from.x
+			if absf(dx) > 90.0 and absf(dx) > absf(st.position.y - _swipe_from.y) * 1.5:
+				_on_button("page_prev" if dx > 0 else "page_next")
+			_swipe_from = Vector2(-9999, -9999)
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
 		if touch.pressed:
@@ -415,8 +427,12 @@ func _on_button(id: String) -> void:
 			main.equip_or_buy(shop_preview)
 		"noop":
 			pass
+		"skin_prev", "skin_next":
+			main.cycle_skin(-1 if id == "skin_prev" else 1)
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
+		"bigmap":
+			bigmap_open = not bigmap_open
 		"atab_arena", "atab_reg", "atab_conn":
 			admin_tab = id.trim_prefix("atab_")
 			admin_page = 0
@@ -1111,6 +1127,15 @@ func _draw_showcase(s: Vector2, t: float) -> void:
 	for i in 8:
 		if pos[i].y >= kc.y:
 			KnifeArt.draw(cv, pos[i], rot[i], 1.05, kind)
+	for side in [-1, 1]:
+		var ac := c + Vector2(side * 225.0, -10.0)
+		var ar := Rect2(ac - Vector2(40, 40), Vector2(80, 80))
+		GameData.disc(cv, ac + Vector2(0, 4), 36.0, Color(0, 0, 0, 0.3))
+		GameData.disc(cv, ac, 36.0, Color(0.12, 0.16, 0.22, 0.85))
+		cv.draw_arc(ac, 36.0, 0.0, TAU, 32, Color(GOLD, 0.7), 2.5)
+		var tip := ac + Vector2(side * 11.0, 0)
+		cv.draw_polyline(PackedVector2Array([tip - Vector2(side * 16.0, -16.0), tip, tip - Vector2(side * 16.0, 16.0)]), Color.WHITE, 6.0)
+		buttons.append({"rect": ar, "id": "skin_prev" if side < 0 else "skin_next", "enabled": true})
 	_text_fit(Vector2(c.x - 250, c.y + 140), Loc.t(sel_id + ".name"), 30, Color.WHITE, 500.0)
 	var kinfo: Dictionary = GameData.KNIVES[kind]
 	_text_fit(Vector2(c.x - 250, c.y + 164), Loc.t("knife_label") % Loc.t(kinfo["id"] + ".name"), 15,
@@ -1242,11 +1267,11 @@ func _draw_leaderboard(r: Rect2) -> void:
 	var mw := (r.size.x - 28.0) / 2.0
 	for i in 2:
 		var mode: String = ["sp", "mp"][i]
-		var mr := Rect2(r.position.x + 12 + i * (mw + 4.0), r.position.y + 42, mw, 32)
+		var mr := Rect2(r.position.x + 12 + i * (mw + 4.0), r.position.y + 42, mw, 40)
 		var on := lb_mode == mode
 		var mcol := Color(0.22, 0.66, 0.33) if mode == "sp" else Color(0.28, 0.42, 0.88)
 		_panel(mr, mcol if on else Color(1, 1, 1, 0.05), mcol.lightened(0.3) if on else Color(1, 1, 1, 0.1), 10, 2 if on else 1)
-		_text_fit(Vector2(mr.position.x, mr.position.y + 22), Loc.t("lb_" + mode), 13, Color.WHITE if on else Color(1, 1, 1, 0.55), mr.size.x)
+		_text_fit(Vector2(mr.position.x, mr.position.y + 26), Loc.t("lb_" + mode), 14, Color.WHITE if on else Color(1, 1, 1, 0.55), mr.size.x)
 		buttons.append({"rect": mr.grow(3.0), "id": "lbm_" + mode, "enabled": true})
 	# Kategori
 	var tabs: Array = LB_TABS[lb_mode]
@@ -1255,12 +1280,12 @@ func _draw_leaderboard(r: Rect2) -> void:
 	var tw := (r.size.x - 24.0 - 8.0) / 3.0
 	var cur: Array = tabs[0]
 	for i in tabs.size():
-		var tr := Rect2(r.position.x + 12 + i * (tw + 4.0), r.position.y + 80, tw, 28)
+		var tr := Rect2(r.position.x + 12 + i * (tw + 4.0), r.position.y + 88, tw, 38)
 		var active: bool = lb_tab == tabs[i][0]
 		if active:
 			cur = tabs[i]
 		_panel(tr, Color(GOLD, 0.22) if active else Color(1, 1, 1, 0.04), GOLD if active else Color(1, 1, 1, 0.08), 9, 2 if active else 1)
-		_text_fit(Vector2(tr.position.x, tr.position.y + 19), Loc.t(tabs[i][1]), 12, GOLD if active else Color(1, 1, 1, 0.55), tr.size.x)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 25), Loc.t(tabs[i][1]), 13, GOLD if active else Color(1, 1, 1, 0.55), tr.size.x)
 		buttons.append({"rect": tr.grow(3.0), "id": "lb_" + tabs[i][0], "enabled": true})
 	# Satırlar: sunucu listesi + oyuncunun güncel değeri
 	var me := String(main.save["player_name"]).strip_edges()
@@ -1279,7 +1304,7 @@ func _draw_leaderboard(r: Rect2) -> void:
 	if not found:
 		rows.append([me if me != "" else Loc.t("lb_you"), my_val, true])
 	rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
-	var y0 := r.position.y + 116.0
+	var y0 := r.position.y + 134.0
 	var foot := 30.0 # alttaki "ilk 3" hedef yazısı
 	var rh := clampf((r.end.y - y0 - foot) / 8.0, 30.0, 44.0)
 	var max_rows := int((r.end.y - y0 - foot) / rh)
@@ -1432,17 +1457,17 @@ func _draw_shop(s: Vector2, t: float) -> void:
 	for k in tabs.size():
 		var id: String = tabs[k]
 		var active := tab == id
-		var tr := Rect2(r.position.x + 22.0 + k * (tab_w + 8.0), r.position.y + 16.0, tab_w, 44.0)
+		var tr := Rect2(r.position.x + 22.0 + k * (tab_w + 8.0), r.position.y + 14.0, tab_w, 58.0)
 		_panel(tr, Color(GOLD, 0.2) if active else Color(1, 1, 1, 0.05), GOLD if active else Color(1, 1, 1, 0.1), 12, 2 if active else 1)
-		_text_fit(Vector2(tr.position.x, tr.position.y + 29), Loc.t("tab_" + id), 18, GOLD if active else Color(1, 1, 1, 0.6), tr.size.x)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 37), Loc.t("tab_" + id), 21, GOLD if active else Color(1, 1, 1, 0.6), tr.size.x)
 		buttons.append({"rect": tr, "id": "shop_" + id, "enabled": true})
 	var coins := int(main.save["coins"])
 	var cw := _coin_width(coins, 20) + 30.0
 	_panel(Rect2(r.end.x - 90 - cw, r.position.y + 16, cw, 44), PANEL_BG, GOLD, 22, 2)
 	_coin_amount(Vector2(r.end.x - 90 - cw + 15, r.position.y + 46), coins, 20)
-	_button(Rect2(r.end.x - 70, r.position.y + 14, 50, 48), "shop_close", "X", Color(0.55, 0.25, 0.25), true, 22)
+	_button(Rect2(r.end.x - 80, r.position.y + 12, 64, 60), "shop_close", "X", Color(0.55, 0.25, 0.25), true, 26)
 
-	var body := Rect2(r.position.x + 22, r.position.y + 76, r.size.x - 44, r.size.y - 96)
+	var body := Rect2(r.position.x + 22, r.position.y + 86, r.size.x - 44, r.size.y - 104)
 	if tab == "levels":
 		var lw := minf(440.0, body.size.x * 0.42)
 		_draw_quests_and_items(Rect2(body.position, Vector2(lw, body.size.y)), t)
@@ -1513,7 +1538,7 @@ func _draw_shop_preview(r: Rect2, t: float) -> void:
 func _grid_rect(content: Rect2, k: int) -> Rect2:
 	var gap := 12.0
 	var cw := (content.size.x - gap * (CARD_COLS - 1)) / CARD_COLS
-	var ch := minf(190.0, (content.size.y - 40.0 - gap) / 2.0)
+	var ch := minf(190.0, (content.size.y - 70.0 - gap) / 2.0)
 	return Rect2(content.position.x + (k % CARD_COLS) * (cw + gap), content.position.y + (k / CARD_COLS) * (ch + gap), cw, ch)
 
 
@@ -1535,10 +1560,10 @@ func _draw_shop_grid(content: Rect2, t: float) -> void:
 	if pages > 1:
 		var row_y := _grid_rect(content, CARD_COLS).end.y + 8.0
 		var cx := content.position.x + content.size.x / 2.0
-		_button(Rect2(cx - 100, row_y, 48, 32), "page_prev", "<", Color(0.25, 0.3, 0.42), page > 0, 18)
-		_button(Rect2(cx + 52, row_y, 48, 32), "page_next", ">", Color(0.25, 0.3, 0.42), page < pages - 1, 18)
+		_button(Rect2(cx - 190, row_y, 110, 54), "page_prev", "<", Color(0.25, 0.3, 0.42), page > 0, 30)
+		_button(Rect2(cx + 80, row_y, 110, 54), "page_next", ">", Color(0.25, 0.3, 0.42), page < pages - 1, 30)
 		for i in pages:
-			GameData.disc(cv, Vector2(cx + (i - (pages - 1) / 2.0) * 18.0, row_y + 16.0), 5.0, GOLD if i == page else Color(1, 1, 1, 0.25))
+			GameData.disc(cv, Vector2(cx + (i - (pages - 1) / 2.0) * 22.0, row_y + 27.0), 7.0, GOLD if i == page else Color(1, 1, 1, 0.25))
 
 
 func _shop_card(r: Rect2, item: Dictionary, selected: bool, equipped: bool, t: float) -> void:
@@ -1792,17 +1817,19 @@ func _draw_stats(s: Vector2) -> void:
 	_draw_player_card(p)
 	main.perf_mark("hud_card", _t)
 	_t = Time.get_ticks_usec()
-	_draw_minimap(Rect2(16, 62, 124, 124))
+	var mm := Rect2(16, 62, 168, 168)
+	_draw_minimap(mm)
+	buttons.append({"rect": mm, "id": "bigmap", "enabled": true})
 	main.perf_mark("hud_minimap", _t)
 	_t = Time.get_ticks_usec()
 
 	# Aktif güçlendirme süreleri (mini haritanın sağında)
-	var y := 84.0
-	for entry in [["speed", p.speed_t], ["shield", p.shield_t], ["magnet", p.magnet_t], ["rage", p.rage_t], ["slow", p.slow_t]]:
+	var y := 86.0
+	for entry in [["infinity", p.inf_t], ["speed", p.speed_t], ["shield", p.shield_t], ["magnet", p.magnet_t], ["rage", p.rage_t], ["slow", p.slow_t]]:
 		var left: float = entry[1]
 		if left <= 0.0:
 			continue
-		var c := Vector2(168, y)
+		var c := Vector2(212, y)
 		GameData.disc(cv, c, 22.0, Color(0, 0, 0, 0.5))
 		var info: Dictionary = GameData.POWERUPS.get(entry[0], {})
 		var icon: Texture2D = GameData.tex(info["icon"]) if not info.is_empty() else null
@@ -1810,6 +1837,8 @@ func _draw_stats(s: Vector2) -> void:
 		var dur: float = info["duration"] if not info.is_empty() else (7.0 if entry[0] == "rage" else 4.0)
 		if icon != null:
 			cv.draw_texture_rect(icon, Rect2(c - Vector2(17, 17), Vector2(34, 34)), false)
+		elif entry[0] == "infinity":
+			GameData.draw_infinity(cv, c, 0.8, info["color"])
 		else:
 			GameData.disc(cv, c, 12.0, ring_col)
 		cv.draw_arc(c, 22.0, -PI / 2, -PI / 2 + TAU * clampf(left / dur, 0.0, 1.0), 32, ring_col, 4.0)
@@ -1853,6 +1882,12 @@ func _draw_stats(s: Vector2) -> void:
 		_button(Rect2(lx - 66, 14, 54, 48), "pause", "II", Color(0.25, 0.3, 0.42), true, 22)
 	if scoreboard_open:
 		_draw_scoreboard(s)
+	if bigmap_open:
+		cv.draw_rect(Rect2(Vector2.ZERO, s), Color(0, 0, 0, 0.45))
+		var side := minf(s.y - 90.0, 560.0)
+		var br := Rect2(s.x / 2.0 - side / 2.0, (s.y - side) / 2.0, side, side)
+		_draw_minimap(br, true)
+		buttons.append({"rect": Rect2(Vector2.ZERO, s), "id": "bigmap", "enabled": true})
 
 
 ## Tam skor tablosu: arenadaki herkes; seviye, leş ve bıçak sayısıyla.
@@ -1912,47 +1947,86 @@ func _draw_player_card(p: Fighter) -> void:
 
 ## Mini harita: köşeleri yuvarlak kare içinde arena, daralan alan, kutular, güçlendirmeler,
 ## rakipler (bıçak sayısına göre büyüklük), lider (taç) ve oyuncu (yön oku).
-func _draw_minimap(rect: Rect2) -> void:
-	_panel(rect, Color(0.04, 0.07, 0.09, 0.82), Color(1, 1, 1, 0.12), 16, 1, 6)
+func _draw_minimap(rect: Rect2, big := false) -> void:
+	_panel(rect, Color(0.03, 0.06, 0.08, 0.88 if big else 0.82), Color(1, 1, 1, 0.18), 18 if big else 14, 1, 6)
 	var c := rect.get_center()
-	var r := rect.size.x * 0.5 - 10.0
+	var r := rect.size.x * 0.5 - (16.0 if big else 8.0)
 	var k: float = r / main.ARENA_RADIUS
-	GameData.disc(cv, c, r, Color(0.2, 0.42, 0.26, 0.9))
+	var u := r / 80.0 # işaret ölçeği (büyük haritada büyür)
+	GameData.disc(cv, c, r, Color(0.18, 0.38, 0.24, 0.95))
 	for i in range(1, 4):
-		cv.draw_arc(c, r * i / 4.0, 0.0, TAU, 40, Color(1, 1, 1, 0.06), 1.0)
-	cv.draw_line(c - Vector2(r, 0), c + Vector2(r, 0), Color(1, 1, 1, 0.05), 1.0)
-	cv.draw_line(c - Vector2(0, r), c + Vector2(0, r), Color(1, 1, 1, 0.05), 1.0)
+		cv.draw_arc(c, r * i / 4.0, 0.0, TAU, 40, Color(1, 1, 1, 0.07), 1.0)
+	# Daralan alan: dışarısı kırmızı, sınır çizgisi
 	var zr: float = main.zone_radius * k
 	if zr < r - 0.5:
-		cv.draw_arc(c, (zr + r) / 2.0, 0.0, TAU, 48, Color(0.85, 0.1, 0.15, 0.4), r - zr)
-		cv.draw_arc(c, zr, 0.0, TAU, 48, Color(1, 0.45, 0.45), 2.0)
-	cv.draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.4), 2.0)
+		cv.draw_arc(c, (zr + r) / 2.0, 0.0, TAU, 48, Color(0.85, 0.1, 0.15, 0.45), r - zr)
+		cv.draw_arc(c, zr, 0.0, TAU, 48, Color(1, 0.5, 0.5), 2.0)
+	cv.draw_arc(c, r, 0.0, TAU, 48, Color(1, 1, 1, 0.5), 2.0)
+	# Ekranda görünen alan (kamera çerçevesi)
+	var vr: Rect2 = main.view_rect
+	var vtl := c + vr.position * k
+	cv.draw_rect(Rect2(vtl, vr.size * k), Color(1, 1, 1, 0.35), false, 1.0)
+	# Kutular (kahverengi kare) ve güçlendirmeler (kendi renginde)
 	for cr in main.crates:
 		var cp: Vector2 = c + (cr["pos"] as Vector2) * k
-		cv.draw_rect(Rect2(cp - Vector2(2, 2), Vector2(4, 4)), Color(0.85, 0.6, 0.3))
+		cv.draw_rect(Rect2(cp - Vector2(1.6, 1.6) * u, Vector2(3.2, 3.2) * u), Color(0.9, 0.62, 0.3))
 	for pu in main.powerups:
 		var info: Dictionary = GameData.POWERUPS[pu["type"]]
-		GameData.disc(cv, c + (pu["pos"] as Vector2) * k, 2.5, info["color"])
+		var pp: Vector2 = c + (pu["pos"] as Vector2) * k
+		GameData.disc(cv, pp, 2.6 * u, Color(0, 0, 0, 0.5))
+		GameData.disc(cv, pp, 2.0 * u, info["color"])
+	# Rakipler: bıçak sayısına göre büyüklük; renk = sana göre tehlike (kırmızı güçlü, sarı denk, yeşil zayıf)
 	var p: Fighter = main.player
+	var my_k: int = p.knives if p != null else 0
 	var leader: Fighter = main._leader()
 	for f in main.fighters:
 		if not f.alive or f == p or f.concealed:
 			continue
 		var fp: Vector2 = c + f.position * k
-		var fr := 2.5 + minf(f.knives, 30) * 0.08
-		GameData.disc(cv, fp, fr + 1.2, Color(0, 0, 0, 0.7))
-		GameData.disc(cv, fp, fr, Color(1, 0.3, 0.25))
+		if f.boss:
+			GameData.disc(cv, fp, 6.5 * u, Color(0, 0, 0, 0.7))
+			GameData.disc(cv, fp, 5.0 * u, Color(0.75, 0.3, 1))
+			cv.draw_arc(fp, 7.5 * u, 0.0, TAU, 20, Color(0.85, 0.5, 1, 0.5 + 0.5 * sin(Time.get_ticks_msec() / 150.0)), 1.5 * u)
+			continue
+		var fr := (2.4 + minf(f.knives, 40) * 0.07) * u
+		var col := Color(1, 0.85, 0.3)
+		if f.knives > my_k + 4:
+			col = Color(1, 0.3, 0.25)
+		elif f.knives < my_k - 3:
+			col = Color(0.45, 1, 0.5)
+		GameData.disc(cv, fp, fr + 1.2 * u, Color(0, 0, 0, 0.7))
+		GameData.disc(cv, fp, fr, col)
 		if f == leader:
-			cv.draw_colored_polygon(PackedVector2Array([fp + Vector2(-5, -5), fp + Vector2(-5, -10), fp + Vector2(-2, -7),
-				fp + Vector2(0, -11), fp + Vector2(2, -7), fp + Vector2(5, -10), fp + Vector2(5, -5)]), GOLD)
+			var cw := 4.0 * u
+			cv.draw_colored_polygon(PackedVector2Array([fp + Vector2(-cw, -fr - 1.0), fp + Vector2(-cw, -fr - cw * 1.3),
+				fp + Vector2(-cw * 0.4, -fr - cw * 0.8), fp + Vector2(0, -fr - cw * 1.5), fp + Vector2(cw * 0.4, -fr - cw * 0.8),
+				fp + Vector2(cw, -fr - cw * 1.3), fp + Vector2(cw, -fr - 1.0)]), GOLD)
+	# Oyuncu: parlayan altın ok
 	if p != null and p.alive:
 		var pp := c + p.position * k
 		var dir := p.facing
 		var side := dir.orthogonal()
-		GameData.disc(cv, pp, 7.0, Color(GOLD, 0.25))
-		cv.draw_colored_polygon(PackedVector2Array([pp + dir * 7.0, pp - dir * 4.0 + side * 5.0, pp - dir * 2.0,
-			pp - dir * 4.0 - side * 5.0]), GOLD)
-
+		var a := 6.0 * u
+		GameData.disc(cv, pp, a * 1.4, Color(GOLD, 0.3 + 0.15 * sin(Time.get_ticks_msec() / 200.0)))
+		cv.draw_colored_polygon(PackedVector2Array([pp + dir * a * 1.2, pp - dir * a * 0.7 + side * a * 0.8, pp - dir * a * 0.3,
+			pp - dir * a * 0.7 - side * a * 0.8]), GOLD)
+		cv.draw_polyline(PackedVector2Array([pp + dir * a * 1.2, pp - dir * a * 0.7 + side * a * 0.8, pp - dir * a * 0.3,
+			pp - dir * a * 0.7 - side * a * 0.8, pp + dir * a * 1.2]), Color(0, 0, 0, 0.7), 1.0)
+	if big:
+		# Büyük harita açıklaması
+		var ly := rect.end.y - 14.0
+		var items := [[Color(1, 0.3, 0.25), Loc.t("map_strong")], [Color(1, 0.85, 0.3), Loc.t("map_equal")],
+			[Color(0.45, 1, 0.5), Loc.t("map_weak")], [Color(0.75, 0.3, 1), Loc.t("map_boss")]]
+		var x := rect.position.x + 22.0
+		for it in items:
+			GameData.disc(cv, Vector2(x, ly - 5), 6.0, it[0])
+			_text(Vector2(x + 10, ly), it[1], 13, Color(1, 1, 1, 0.8))
+			x += 26.0 + font.get_string_size(it[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	else:
+		# Dokunulabilir olduğunu belirten küçük büyüteç işareti
+		var mc := rect.end - Vector2(14, 14)
+		cv.draw_arc(mc + Vector2(-2, -2), 5.0, 0.0, TAU, 12, Color(1, 1, 1, 0.6), 2.0)
+		cv.draw_line(mc + Vector2(2, 2), mc + Vector2(6, 6), Color(1, 1, 1, 0.6), 2.0)
 
 func _draw_kill_feed(s: Vector2) -> void:
 	var y := 92.0
@@ -2023,7 +2097,7 @@ func _draw_controls(s: Vector2) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	# --- FIRLAT: basılınca küçülür; bekleme süresinde üstüne kararan dilim gelir, bitince parlar ---
 	var c := _throw_center()
-	var ready: bool = p.knives > 0 or p.bombs > 0
+	var ready: bool = p.knives > 0 or p.bombs > 0 or p.inf_t > 0.0
 	var cd_ratio := clampf(p.throw_cooldown / (main.THROW_COOLDOWN * (2.0 if p.bombs > 0 else 1.0)), 0.0, 1.0)
 	if cd_ratio <= 0.0 and _throw_was_cooling:
 		_throw_ready_at = now
@@ -2055,8 +2129,11 @@ func _draw_controls(s: Vector2) -> void:
 	var kb := c + Vector2(tr * 0.68, -tr * 0.68)
 	GameData.disc(cv, kb, 20.0, Color(0.1, 0.12, 0.16, 0.95))
 	cv.draw_arc(kb, 20.0, 0.0, TAU, 24, Color(1, 0.4, 0.35) if p.knives <= 0 else GOLD, 2.0)
-	_text(Vector2(kb.x - 20, kb.y + 7), str(p.knives), 18, Color(1, 0.45, 0.4) if p.knives <= 0 else Color.WHITE,
-		HORIZONTAL_ALIGNMENT_CENTER, 40.0)
+	if p.inf_t > 0.0:
+		GameData.draw_infinity(cv, kb, 0.75, Color(0.4, 0.95, 1))
+	else:
+		_text(Vector2(kb.x - 20, kb.y + 7), str(p.knives), 18, Color(1, 0.45, 0.4) if p.knives <= 0 else Color.WHITE,
+			HORIZONTAL_ALIGNMENT_CENTER, 40.0)
 
 	# --- ATIL: bekleme süresinde kararan dilim ve kalan saniye; hazır olunca parlar ---
 	var d := _dash_center()

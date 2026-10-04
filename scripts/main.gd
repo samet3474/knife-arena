@@ -61,7 +61,7 @@ const BOT_NAMES := [
 	"Battal", "Alp", "Hançer", "Bıçkın", "Keskin", "Satır", "Bora", "Pala", "Şimşek",
 	"Kasırga", "Gölge", "Yıldırım", "Kartal", "Tilki", "Tunç", "Çelik", "Kaya", "Efe",
 ]
-const POWERUP_TYPES := ["speed", "shield", "heal", "magnet", "knives", "bomb"]
+const POWERUP_TYPES := ["speed", "shield", "heal", "magnet", "knives", "bomb", "infinity"]
 
 var fighters: Array[Fighter] = []
 var fighter_by_id := {}
@@ -105,7 +105,7 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
 	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0,
-	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0}
+	"chat_cache": [], "chat_rev": 0, "conn_cache": [], "reset_epoch": 0, "streak": 0}
 
 # Çok oyunculu
 var net_mode := ""
@@ -301,6 +301,8 @@ func _apply_test_args(args: PackedStringArray) -> void:
 				hud.open_shop(which)
 	if "--scoreboard" in args:
 		hud.scoreboard_open = true
+	if "--bigmap" in args:
+		hud.bigmap_open = true
 	for a in args:
 		if a.begins_with("--admin-login="):
 			admin_connect(a.trim_prefix("--admin-login="))
@@ -538,10 +540,19 @@ func _check_daily_bonus() -> void:
 	var today := Time.get_date_string_from_system()
 	if save["last_daily"] == today:
 		return
+	# Giriş serisi: dün de girdiyse seri artar (7. günden sonra başa döner), ödül her gün büyür
+	var yesterday := Time.get_date_string_from_unix_time(int(Time.get_unix_time_from_system()) - 86400)
+	var streak := int(save["streak"]) + 1 if save["last_daily"] == yesterday else 1
+	if streak > 7:
+		streak = 1
+	save["streak"] = streak
 	save["last_daily"] = today
-	save["coins"] = int(save["coins"]) + GameData.DAILY_BONUS
+	var bonus := GameData.DAILY_BONUS + (streak - 1) * 15
+	if streak == 7:
+		bonus += 50 # haftanın büyük ödülü
+	save["coins"] = int(save["coins"]) + bonus
 	_write_save()
-	daily_message = Loc.t("daily") % GameData.DAILY_BONUS
+	daily_message = (Loc.t("daily_streak") % [streak, bonus]) if streak > 1 else (Loc.t("daily") % bonus)
 
 
 # --- Tur akışı ---------------------------------------------------------------
@@ -1622,6 +1633,8 @@ func _apply_powerup(f: Fighter, type: String) -> void:
 			f.knives = mini(Fighter.MAX_KNIVES, f.knives + 5)
 		"bomb":
 			f.bombs = mini(Fighter.MAX_BOMBS, f.bombs + 1)
+		"infinity":
+			f.inf_t = info["duration"]
 	_emit({"t": "pu", "f": f.net_id, "type": type})
 
 
@@ -1737,7 +1750,7 @@ func _send_input(throw_now := false) -> void:
 
 ## Hedef verilmişse rakibin hareketini kestirerek ona, yoksa baktığı yöndeki en yakın rakibe fırlatır.
 func _fighter_throw(f: Fighter, target: Fighter) -> void:
-	if (f.knives <= 0 and f.bombs <= 0) or f.throw_cooldown > 0.0:
+	if (f.knives <= 0 and f.bombs <= 0 and f.inf_t <= 0.0) or f.throw_cooldown > 0.0:
 		return
 	if target != null and target.alive and target != f and can_see(f, target) \
 			and f.position.distance_to(target.position) < AIM_RANGE + 150.0:
@@ -1766,7 +1779,7 @@ func _fighter_throw(f: Fighter, target: Fighter) -> void:
 
 
 func _throw_knife(f: Fighter, dir: Vector2) -> void:
-	if not f.alive or (f.knives <= 0 and f.bombs <= 0) or f.throw_cooldown > 0.0 or dir == Vector2.ZERO:
+	if not f.alive or (f.knives <= 0 and f.bombs <= 0 and f.inf_t <= 0.0) or f.throw_cooldown > 0.0 or dir == Vector2.ZERO:
 		return
 	var n := dir.normalized()
 	# Elde bomba varsa önce o atılır (Knife.io'daki gibi): değdiği yerde patlar
@@ -1778,8 +1791,11 @@ func _throw_knife(f: Fighter, dir: Vector2) -> void:
 		projectiles.append({"pos": bstart, "vel": n * BOMB_SPEED, "owner": f.get_instance_id(), "life": BOMB_LIFE, "kind": BOMB_KIND})
 		_emit({"t": "throw", "f": f.net_id, "pos": bstart, "n": n})
 		return
-	f.knives -= 1
-	f.throw_cooldown = THROW_COOLDOWN
+	# Sınırsız bıçak (∞): bıçak harcanmaz ve daha seri atılır
+	var infinite := f.inf_t > 0.0
+	if not infinite:
+		f.knives -= 1
+	f.throw_cooldown = THROW_COOLDOWN * (0.55 if infinite else 1.0)
 	f.facing = n
 	if absf(n.x) > 0.2:
 		f.flip = signf(n.x)
@@ -1791,6 +1807,7 @@ func _throw_knife(f: Fighter, dir: Vector2) -> void:
 		"owner": f.get_instance_id(),
 		"life": THROW_LIFE,
 		"kind": f.knife_kind,
+		"inf": infinite,
 	})
 	_emit({"t": "throw", "f": f.net_id, "pos": start, "n": n})
 
@@ -1848,7 +1865,8 @@ func _update_projectiles(delta: float) -> void:
 		if hit:
 			projectiles.remove_at(i)
 		elif float(p["life"]) <= 0.0 or pos.length() > ARENA_RADIUS:
-			if pos.length() < ARENA_RADIUS:
+			# Sınırsız bıçak atışları yere düşüp birikmesin
+			if pos.length() < ARENA_RADIUS and not p.get("inf", false):
 				_spawn_pickup(pos, vel * 0.15)
 			projectiles.remove_at(i)
 
@@ -2862,7 +2880,7 @@ func _build_snapshot() -> Dictionary:
 	for f in fighters:
 		f_rows.append([f.net_id, f.display_name, f.skin_id, f.color, f.level, f.knife_kind, f.position, f.hp,
 			f.knives, f.kills, f.alive, f.move_dir, f.facing, f.shield_t, f.speed_t, f.magnet_t, f.rage_t,
-			f.slow_t, f.dash_t, f.peer_id, f.accessory, f.bombs, f.boss])
+			f.slow_t, f.dash_t, f.peer_id, f.accessory, f.bombs, f.boss, f.inf_t])
 	var p := PackedFloat32Array()
 	for pk in pickups:
 		var pos: Vector2 = pk["pos"]
@@ -3235,6 +3253,8 @@ func _client_snapshot_body(d: Dictionary) -> void:
 			f.bombs = row[21]
 			f.boss = row[22]
 			f.max_hp = BOSS_HP if f.boss else 100.0
+		if row.size() > 23:
+			f.inf_t = row[23]
 	# Artık sunucuda olmayan savaşçıları kaldır (kendi ölü karakterimiz sonuç ekranı için kalır)
 	for i in range(fighters.size() - 1, -1, -1):
 		var f := fighters[i]
@@ -3735,6 +3755,9 @@ func _draw_items_body() -> void:
 			items.draw_texture_rect(icon, Rect2(c - Vector2(26, 26), Vector2(52, 52)), false)
 		elif p["type"] == "bomb":
 			_draw_bomb(items, c, 1.0, t)
+		elif p["type"] == "infinity":
+			GameData.disc(items, c, 24.0, Color(0.1, 0.25, 0.35, 0.9))
+			GameData.draw_infinity(items, c, 1.0, Color(0.4, 0.95, 1))
 		else:
 			# +5 bıçak paketi: yelpaze şeklinde bıçaklar ve "x5"
 			GameData.disc(items, c, 24.0, Color(0.2, 0.25, 0.35, 0.9))

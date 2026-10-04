@@ -43,6 +43,8 @@ var aura_col := Color(0, 0, 0, 0) # ayak altındaki parlayan halka rengi (efektl
 var boss := false # Dev Boss: büyük gövde, çok can, yavaş
 
 const BOSS_SCALE := 1.5
+const KNIFE_REGEN_MAX := 6 # bu sayının altındayken bıçak kendiliğinden gelir
+const KNIFE_REGEN_TIME := 2.5 # saniyede bir
 const MAX_BOMBS := 3
 
 
@@ -77,6 +79,8 @@ var speed_t := 0.0
 var shield_t := 0.0
 var magnet_t := 0.0
 var rage_t := 0.0 # gizemli kutu: hasar x1.6
+var inf_t := 0.0 # sınırsız bıçak (∞) güçlendirmesi
+var regen_timer := 0.0 # bıçak yenilenmesi
 var slow_t := 0.0 # gizemli kutu: yavaşlama
 var dash_t := 0.0
 var dash_cd := 0.0
@@ -197,6 +201,15 @@ func tick(delta: float) -> void:
 	throw_cooldown = maxf(0.0, throw_cooldown - delta)
 	speed_t = maxf(0.0, speed_t - delta)
 	shield_t = maxf(0.0, shield_t - delta)
+	inf_t = maxf(0.0, inf_t - delta)
+	# Knife.io'daki gibi: bıçağı az olan oyuncunun bıçakları zamanla yenilenir (oyundan kopmasın)
+	if knives < KNIFE_REGEN_MAX:
+		regen_timer += delta
+		if regen_timer >= KNIFE_REGEN_TIME:
+			regen_timer = 0.0
+			knives += 1
+	else:
+		regen_timer = 0.0
 	magnet_t = maxf(0.0, magnet_t - delta)
 	since_hit += delta
 	if since_hit > 3.0:

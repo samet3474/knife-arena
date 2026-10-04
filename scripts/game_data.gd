@@ -65,6 +65,7 @@ const POWERUPS := {
 	"magnet": {"icon": "pu_magnet", "color": Color(0.85, 0.45, 0.95), "duration": 8.0},
 	"knives": {"icon": "", "color": Color(1, 1, 1), "duration": 0.0},
 	"bomb": {"icon": "", "color": Color(1, 0.45, 0.2), "duration": 0.0},
+	"infinity": {"icon": "", "color": Color(0.35, 0.9, 1), "duration": 8.0},
 }
 
 ## Ekonomi: maç sonu ödülleri (altın).
@@ -149,6 +150,12 @@ static func disc(ci: CanvasItem, pos: Vector2, r: float, col: Color) -> void:
 		ci.draw_texture_rect(disc_tex(), Rect2(pos.x - r, pos.y - r, r * 2.0, r * 2.0), false, col)
 	else:
 		ci.draw_circle(pos, r, col)
+
+
+## Sonsuzluk (∞) simgesi: sınırsız bıçak güçlendirmesi (yazı tipine güvenmeden çizilir).
+static func draw_infinity(ci: CanvasItem, c: Vector2, s: float, col: Color) -> void:
+	ci.draw_arc(c + Vector2(-8, 0) * s, 8.0 * s, 0.0, TAU, 20, col, 4.0 * s)
+	ci.draw_arc(c + Vector2(8, 0) * s, 8.0 * s, 0.0, TAU, 20, col, 4.0 * s)
 
 
 ## Altın ikonu çizer (arayüz ve arena için).
