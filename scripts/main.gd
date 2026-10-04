@@ -272,6 +272,7 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--host="):
 			save["mp_host"] = a.trim_prefix("--host=")
 	test_move = "--test-move" in args
+	hud.touch_debug = "--dokunma" in args
 	if "--boss-now" in args:
 		next_boss_time = 1.0
 	if "--bombs" in args and player != null:

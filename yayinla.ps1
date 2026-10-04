@@ -1,4 +1,4 @@
-﻿param([string]$ServerUrl = "")
+param([string]$ServerUrl = "")
 # Knife Arena'yı internete yayınlar:
 #  1) Web sürümünü docs/ klasörüne çıkarır (GitHub Pages buradan yayınlar)
 #  2) Sunucu paketini server/ klasörüne çıkarır (Render.com bundan Docker sunucusu kurar)
@@ -26,7 +26,9 @@ $head = @"
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Knife Arena">
 <link rel="apple-touch-icon" href="index.apple-touch-icon.png">
-<style>html, body { overscroll-behavior: none; touch-action: none; background: #0b0f0d; }</style>
+<style>html, body { overscroll-behavior: none; touch-action: none; background: #0b0f0d; }
+* { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+canvas { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; outline: none; }</style>
 <script>
 (function () {
 	var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;

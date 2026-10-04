@@ -79,6 +79,12 @@ func _draw_controls_layer() -> void:
 	var fps := Engine.get_frames_per_second()
 	var fps_col := Color(0.5, 1, 0.6, 0.6) if fps >= 50 else (Color(1, 0.85, 0.3, 0.8) if fps >= 30 else Color(1, 0.4, 0.35, 0.9))
 	_text(Vector2(s.x / 2 - 50, s.y - 8), "%d FPS" % fps, 13, fps_col, HORIZONTAL_ALIGNMENT_CENTER, 100.0)
+	if touch_debug:
+		var info := "bas:%d  kaldir:%d  surukle:%d  fare:%d  son:%s  joy:%d %s  buton:%s  ekran:%s" % [dbg["down"], dbg["up"], dbg["drag"],
+			dbg["mouse"], (dbg["last"] as Vector2).round(), joy_index, joy_vector().snappedf(0.01), dbg["btn"], s.round()]
+		_panel(Rect2(s.x / 2 - 420, 96, 840, 30), Color(0, 0, 0, 0.75), Color(1, 0.85, 0.3), 8, 1)
+		_text(Vector2(s.x / 2 - 420, 117), info, 14, Color(1, 0.9, 0.4), HORIZONTAL_ALIGNMENT_CENTER, 840.0)
+		GameData.disc(cv, dbg["last"], 10.0, Color(1, 0.2, 0.2, 0.8))
 	cv = self
 
 
@@ -251,13 +257,6 @@ func _process(delta: float) -> void:
 		admin_edit.release_focus()
 
 
-## Uygulama arka plana geçince (bildirim, ana ekran) basılı dokunuşlar bırakılmış sayılır.
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
-		joy_index = -1
-		throw_index = -1
-
-
 func flash_banner(text: String, col := Color(1, 0.4, 0.35), duration := 2.2) -> void:
 	banner_text = text
 	banner_color = col
@@ -299,12 +298,28 @@ func _joy_rest() -> Vector2:
 
 # --- Girdi -------------------------------------------------------------------
 
+## Dokunma test modu (?dokunma): telefonda hangi olayların geldiğini ekranda gösterir.
+var touch_debug := false
+var dbg := {"down": 0, "up": 0, "drag": 0, "mouse": 0, "last": Vector2.ZERO, "btn": ""}
+
+
 func _input(event: InputEvent) -> void:
+	if touch_debug:
+		if event is InputEventScreenTouch:
+			dbg["down" if event.pressed else "up"] += 1
+			dbg["last"] = event.position
+		elif event is InputEventScreenDrag:
+			dbg["drag"] += 1
+			dbg["last"] = event.position
+		elif event is InputEventMouseButton or event is InputEventMouseMotion:
+			dbg["mouse"] += 1
 	if event is InputEventScreenTouch:
 		var touch := event as InputEventScreenTouch
 		if touch.pressed:
 			for b in buttons:
 				if (b["rect"] as Rect2).has_point(touch.position):
+					if touch_debug:
+						dbg["btn"] = String(b["id"])
 					if b["enabled"]:
 						joy_index = -1
 						throw_index = -1
