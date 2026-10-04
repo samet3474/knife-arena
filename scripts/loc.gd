@@ -189,6 +189,12 @@ const TEXT := {
 	"lb_level": ["SEVİYE", "LEVEL"],
 	"lb_coins": ["ALTIN", "COINS"],
 	"lb_you": ["Sen", "You"],
+	"lb_sp": ["TEK OYUNCU", "SINGLE"],
+	"lb_mp": ["ÇOK OYUNCU", "ONLINE"],
+	"lb_wins": ["ZAFER", "WINS"],
+	"lb_best": ["REKOR", "RECORD"],
+	"lb_goal": ["İlk 3'e girmek için %d daha!", "%d more to reach the top 3!"],
+	"lb_podium": ["Zirvedesin! Yerini koru", "You're on the podium! Hold on"],
 	"lb_empty": ["Çok oyunculu oyna, tabloya gir!", "Play online to join the board!"],
 	"mp_outdated": ["Sunucu güncelleniyor, birkaç dakika sonra tekrar dene", "Server is updating, try again in a few minutes"],
 }

@@ -90,7 +90,8 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"best_rank": 0, "games": 0, "sound": true, "lang": "", "auto_aim": true,
 	"coins": GameData.STARTING_COINS, "owned": [], "player_name": "", "last_daily": "",
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
-	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {}}
+	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
+	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0}
 
 # Çok oyunculu
 var net_mode := ""
@@ -250,6 +251,8 @@ func _apply_test_args(args: PackedStringArray) -> void:
 		if a.begins_with("--knife=") and player != null:
 			player.knife_kind = a.trim_prefix("--knife=").to_int()
 			player.knives = 16
+		if a.begins_with("--lb-mode="):
+			hud.lb_mode = a.trim_prefix("--lb-mode=")
 		if a.begins_with("--host="):
 			save["mp_host"] = a.trim_prefix("--host=")
 	test_move = "--test-move" in args
@@ -306,6 +309,10 @@ func _load_save() -> void:
 		return
 	for k in save.keys():
 		save[k] = cfg.get_value("player", k, save[k])
+	# Eski kayıt: mod ayrımı yokken toplanan leş/galibiyetler tek oyunculuya sayılır
+	if not cfg.has_section_key("player", "sp_kills"):
+		save["sp_kills"] = int(save["total_kills"])
+		save["sp_wins"] = int(save["wins"])
 
 
 func _write_save() -> void:
@@ -590,6 +597,14 @@ func _end_round(won: bool) -> void:
 	save["total_kills"] = int(save["total_kills"]) + player.kills
 	if won:
 		save["wins"] = int(save["wins"]) + 1
+	# Skor tablosu için mod bazında istatistikler
+	if net_mode == "client":
+		save["mp_kills"] = int(save["mp_kills"]) + player.kills
+		save["mp_best"] = maxi(int(save["mp_best"]), player.kills)
+	else:
+		save["sp_kills"] = int(save["sp_kills"]) + player.kills
+		if won:
+			save["sp_wins"] = int(save["sp_wins"]) + 1
 	var rank := 1 if won else final_rank
 	if int(save["best_rank"]) == 0 or rank < int(save["best_rank"]):
 		save["best_rank"] = rank
@@ -2006,6 +2021,7 @@ func server_join(peer: int, info: Dictionary) -> void:
 ## Dosyaya yazılır; ücretsiz sunucu yeniden kurulunca sıfırlanabilir.
 const RECORDS_PATH := "user://records.json"
 const TOP_N := 10
+const LB_STATS_MAX := ["sk", "sw", "mk", "mb"]
 
 
 func _load_records() -> void:
@@ -2015,14 +2031,20 @@ func _load_records() -> void:
 	var d = JSON.parse_string(f.get_as_text())
 	if d is Dictionary:
 		records = d
+		# Eski kayıtlar: tek "k" (toplam leş) alanı tek oyunculu leşe taşınır
+		for r in records.values():
+			if r is Dictionary and r.has("k") and not r.has("sk"):
+				r["sk"] = r["k"]
 
 
 func _update_record(fname: String, info: Dictionary, level: int) -> void:
 	var key := fname.to_lower()
-	var r: Dictionary = records.get(key, {"n": fname, "k": 0, "l": 1, "c": 0})
+	var r: Dictionary = records.get(key, {"n": fname, "l": 1, "c": 0})
 	r["n"] = fname
-	r["k"] = maxi(int(r["k"]), clampi(int(info.get("kills", 0)), 0, 1000000))
-	r["l"] = maxi(int(r["l"]), level)
+	# sk/sw: tek oyunculu leş/galibiyet, mk: çok oyunculu leş, mb: çok oyunculuda tek canda en çok leş
+	for stat in LB_STATS_MAX:
+		r[stat] = maxi(int(r.get(stat, 0)), clampi(int(info.get(stat, 0)), 0, 1000000))
+	r["l"] = maxi(int(r.get("l", 1)), level)
 	r["c"] = clampi(int(info.get("coins", 0)), 0, 10000000)
 	records[key] = r
 	var f := FileAccess.open(RECORDS_PATH, FileAccess.WRITE)
@@ -2039,11 +2061,13 @@ func server_top_request(info: Dictionary) -> void:
 func top_lists() -> Dictionary:
 	var out := {}
 	var all: Array = records.values()
-	for stat in ["k", "l", "c"]:
-		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a[stat]) > int(b[stat]))
+	for stat in LB_STATS_MAX + ["l", "c"]:
+		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get(stat, 0)) > int(b.get(stat, 0)))
 		var rows := []
 		for i in mini(TOP_N, all.size()):
-			rows.append([String(all[i]["n"]), int(all[i][stat])])
+			if int(all[i].get(stat, 0)) <= 0:
+				break
+			rows.append([String(all[i]["n"]), int(all[i].get(stat, 0))])
 		out[stat] = rows
 	return out
 
@@ -2228,7 +2252,8 @@ func _mp_connect() -> void:
 
 func _join_info() -> Dictionary:
 	return {"name": player_name(), "skin": playable_skin()["id"], "knife": selected_knife(), "level": int(save["level"]),
-		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"])}
+		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"]),
+		"sk": int(save["sp_kills"]), "sw": int(save["sp_wins"]), "mk": int(save["mp_kills"]), "mb": int(save["mp_best"])}
 
 
 ## Ana menü skor tablosunu çevrimiçi sunucudan çeker (oyuna girmeden kısa bir bağlantıyla).

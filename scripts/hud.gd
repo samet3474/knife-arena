@@ -25,7 +25,8 @@ var tab := "characters" # characters | knives | levels
 var popup := "" # "" | shop | settings (menüde açılır pencere)
 var shop_preview := "" # koleksiyonda önizlenen kartın id'si
 var scoreboard_open := false
-var lb_tab := "k" # ana menü skor tablosu: k (leş) | l (seviye) | c (altın)
+var lb_tab := "sk" # ana menü skor tablosu kategorisi (bkz. LB_TABS)
+var lb_mode := "mp" # sp (tek oyunculu) | mp (çok oyunculu)
 var banner_text := ""
 var banner_time := 0.0
 var banner_color := Color(1, 0.4, 0.35)
@@ -297,7 +298,11 @@ func _on_button(id: String) -> void:
 			pass
 		"scoreboard":
 			scoreboard_open = not scoreboard_open
-		"lb_k", "lb_l", "lb_c":
+		"lbm_sp", "lbm_mp":
+			lb_mode = id.trim_prefix("lbm_")
+			lb_tab = LB_TABS[lb_mode][0][0]
+			main.sfx.play("select", 0.0, 0.0)
+		_ when id.begins_with("lb_"):
 			lb_tab = id.trim_prefix("lb_")
 			main.sfx.play("select", 0.0, 0.0)
 		"admin_open":
@@ -878,21 +883,47 @@ func _draw_menu_side(s: Vector2) -> void:
 	_draw_leaderboard(Rect2(s.x - 24 - 260, 92, 260, s.y - 92 - 24))
 
 
-## Ana menü skor tablosu: çevrimiçi sunucudan son bağlantıda alınan liste + oyuncunun kendisi.
+## Skor tablosu kategorileri: mod → [istatistik anahtarı, başlık, kayıttaki karşılığı, renk]
+const LB_TABS := {
+	"sp": [["sk", "lb_kills", "sp_kills"], ["sw", "lb_wins", "sp_wins"], ["l", "lb_level", "level"]],
+	"mp": [["mk", "lb_kills", "mp_kills"], ["mb", "lb_best", "mp_best"], ["c", "lb_coins", "coins"]],
+}
+const MEDALS := [Color(1, 0.82, 0.25), Color(0.82, 0.85, 0.92), Color(0.86, 0.55, 0.3)]
+
+
+## Ana menü skor tablosu: çevrimiçi sunucudan çekilen liste + oyuncunun kendisi.
+## Üstte mod seçimi (tek / çok oyunculu), altında kategori; ilk üçe taç ve madalyalar.
 func _draw_leaderboard(r: Rect2) -> void:
 	_panel(r, PANEL_BG, Color(GOLD, 0.35), 18, 2)
-	_text(Vector2(r.position.x, r.position.y + 30), Loc.t("lb_title"), 19, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
-	var tabs := [["k", Loc.t("lb_kills")], ["l", Loc.t("lb_level")], ["c", Loc.t("lb_coins")]]
+	_draw_crown_icon(Vector2(r.position.x + 30, r.position.y + 24), 0.8)
+	_text(Vector2(r.position.x + 22, r.position.y + 31), Loc.t("lb_title"), 19, GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 22.0)
+	# Mod seçimi
+	var mw := (r.size.x - 28.0) / 2.0
+	for i in 2:
+		var mode: String = ["sp", "mp"][i]
+		var mr := Rect2(r.position.x + 12 + i * (mw + 4.0), r.position.y + 42, mw, 32)
+		var on := lb_mode == mode
+		var mcol := Color(0.22, 0.66, 0.33) if mode == "sp" else Color(0.28, 0.42, 0.88)
+		_panel(mr, mcol if on else Color(1, 1, 1, 0.05), mcol.lightened(0.3) if on else Color(1, 1, 1, 0.1), 10, 2 if on else 1)
+		_text_fit(Vector2(mr.position.x, mr.position.y + 22), Loc.t("lb_" + mode), 13, Color.WHITE if on else Color(1, 1, 1, 0.55), mr.size.x)
+		buttons.append({"rect": mr.grow(3.0), "id": "lbm_" + mode, "enabled": true})
+	# Kategori
+	var tabs: Array = LB_TABS[lb_mode]
+	if not tabs.any(func(x: Array) -> bool: return x[0] == lb_tab):
+		lb_tab = tabs[0][0]
 	var tw := (r.size.x - 24.0 - 8.0) / 3.0
+	var cur: Array = tabs[0]
 	for i in tabs.size():
-		var tr := Rect2(r.position.x + 12 + i * (tw + 4.0), r.position.y + 42, tw, 34)
+		var tr := Rect2(r.position.x + 12 + i * (tw + 4.0), r.position.y + 80, tw, 28)
 		var active: bool = lb_tab == tabs[i][0]
-		_panel(tr, Color(GOLD, 0.22) if active else Color(1, 1, 1, 0.05), GOLD if active else Color(1, 1, 1, 0.1), 10, 2 if active else 1)
-		_text_fit(Vector2(tr.position.x, tr.position.y + 23), tabs[i][1], 14, GOLD if active else Color(1, 1, 1, 0.6), tr.size.x)
-		buttons.append({"rect": tr.grow(4.0), "id": "lb_" + tabs[i][0], "enabled": true})
+		if active:
+			cur = tabs[i]
+		_panel(tr, Color(GOLD, 0.22) if active else Color(1, 1, 1, 0.04), GOLD if active else Color(1, 1, 1, 0.08), 9, 2 if active else 1)
+		_text_fit(Vector2(tr.position.x, tr.position.y + 19), Loc.t(tabs[i][1]), 12, GOLD if active else Color(1, 1, 1, 0.55), tr.size.x)
+		buttons.append({"rect": tr.grow(3.0), "id": "lb_" + tabs[i][0], "enabled": true})
 	# Satırlar: sunucu listesi + oyuncunun güncel değeri
 	var me := String(main.save["player_name"]).strip_edges()
-	var my_val := int(main.save[{"k": "total_kills", "l": "level", "c": "coins"}[lb_tab]])
+	var my_val := int(main.save[cur[2]])
 	var top: Dictionary = main.save["top"] if main.save["top"] is Dictionary else {}
 	var rows := []
 	var found := false
@@ -907,39 +938,77 @@ func _draw_leaderboard(r: Rect2) -> void:
 	if not found:
 		rows.append([me if me != "" else Loc.t("lb_you"), my_val, true])
 	rows.sort_custom(func(a: Array, b: Array) -> bool: return int(a[1]) > int(b[1]))
-	var y0 := r.position.y + 86.0
-	var rh := minf(40.0, (r.end.y - y0 - 10.0) / 9.0)
-	var max_rows := int((r.end.y - y0 - 6.0) / rh)
+	var y0 := r.position.y + 116.0
+	var foot := 30.0 # alttaki "ilk 3" hedef yazısı
+	var rh := clampf((r.end.y - y0 - foot) / 8.0, 30.0, 44.0)
+	var max_rows := int((r.end.y - y0 - foot) / rh)
 	var my_rank := 0
 	for i in rows.size():
 		if rows[i][2]:
 			my_rank = i
+	var vcol := Color(0.6, 0.85, 1) if lb_tab == "l" else GOLD
 	for i in mini(rows.size(), max_rows):
 		var idx := i
 		# Son satır: oyuncu listenin dışında kalıyorsa onu göster
 		if i == max_rows - 1 and my_rank >= max_rows:
 			idx = my_rank
 		var row: Array = rows[idx]
-		var rr := Rect2(r.position.x + 10, y0 + i * rh, r.size.x - 20, rh - 4.0)
+		var rr := Rect2(r.position.x + 8, y0 + i * rh, r.size.x - 16, rh - 4.0)
 		var mine: bool = row[2]
-		_panel(rr, Color(GOLD, 0.2) if mine else Color(1, 1, 1, 0.04 if i % 2 == 0 else 0.02), Color(GOLD, 0.7) if mine else Color(0, 0, 0, 0), 10, 1 if mine else 0)
-		var medal := [GOLD, Color(0.8, 0.82, 0.88), Color(0.85, 0.55, 0.3)]
-		var rc := rr.position + Vector2(18, rr.size.y / 2.0)
-		if idx < 3:
-			GameData.disc(cv, rc, 11.0, medal[idx])
-		var fs := int(minf(16.0, rh * 0.45))
-		_text(Vector2(rc.x - 14, rc.y + fs * 0.36), str(idx + 1), fs, Color(0.1, 0.1, 0.12) if idx < 3 else Color(1, 1, 1, 0.6),
-			HORIZONTAL_ALIGNMENT_CENTER, 28.0)
+		var podium := idx < 3
+		var bg := Color(MEDALS[idx], 0.16) if podium else Color(1, 1, 1, 0.04 if i % 2 == 0 else 0.02)
+		var border := Color(MEDALS[idx], 0.55) if podium else Color(0, 0, 0, 0)
+		if mine:
+			bg = Color(GOLD, 0.24)
+			border = GOLD
+		_panel(rr, bg, border, 10, 2 if mine else (1 if podium else 0))
+		var rc := rr.position + Vector2(20, rr.size.y / 2.0)
+		var fs := int(minf(17.0 if podium else 15.0, rh * 0.48))
+		if idx == 0:
+			_draw_crown_icon(rc + Vector2(0, 1), 0.85)
+		elif podium:
+			_draw_medal(rc, minf(11.0, rh * 0.3), MEDALS[idx], idx + 1)
+		else:
+			_text(Vector2(rc.x - 14, rc.y + fs * 0.36), str(idx + 1), fs, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_CENTER, 28.0)
 		var val := str(row[1])
 		var vw := font.get_string_size(val, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		_text(Vector2(rr.position.x + 38, rc.y + fs * 0.36), String(row[0]), _fit_size(String(row[0]), fs, rr.size.x - 56.0 - vw),
-			GOLD if mine else Color.WHITE)
-		_text(Vector2(rr.position.x, rc.y + fs * 0.36), val, fs, Color(0.6, 0.85, 1) if lb_tab == "l" else GOLD,
-			HORIZONTAL_ALIGNMENT_RIGHT, rr.size.x - 10.0)
-	if top.is_empty() and rows.size() <= 1:
-		_text(Vector2(r.position.x + 12, y0 + rh * 1.6), Loc.t("lb_empty"), _fit_size(Loc.t("lb_empty"), 14, r.size.x - 24.0),
-			Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 24.0)
+		var name_col: Color = GOLD if mine else (MEDALS[idx].lightened(0.25) if podium else Color.WHITE)
+		_text(Vector2(rr.position.x + 42, rc.y + fs * 0.36), String(row[0]), _fit_size(String(row[0]), fs, rr.size.x - 60.0 - vw), name_col)
+		_text(Vector2(rr.position.x, rc.y + fs * 0.36), val, fs, vcol, HORIZONTAL_ALIGNMENT_RIGHT, rr.size.x - 10.0)
+	# Hedef: ilk üçe girmek için gereken fark
+	var goal := ""
+	if rows.size() > 3 and my_rank >= 3:
+		goal = Loc.t("lb_goal") % (int(rows[2][1]) - my_val + 1)
+	elif my_rank < 3 and my_val > 0:
+		goal = Loc.t("lb_podium")
+	elif top.is_empty():
+		goal = Loc.t("lb_empty")
+	if goal != "":
+		_text(Vector2(r.position.x + 10, r.end.y - 12), goal, _fit_size(goal, 13, r.size.x - 20.0), Color(1, 1, 1, 0.6),
+			HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 20.0)
 
+
+## Küçük taç ikonu (skor tablosunda birinci).
+func _draw_crown_icon(c: Vector2, sc: float) -> void:
+	var pts := PackedVector2Array([Vector2(-13, 8), Vector2(-15, -7), Vector2(-7, 0), Vector2(0, -11),
+		Vector2(7, 0), Vector2(15, -7), Vector2(13, 8)])
+	for i in pts.size():
+		pts[i] = c + pts[i] * sc
+	cv.draw_colored_polygon(pts, Color(1, 0.8, 0.2))
+	pts.append(pts[0])
+	cv.draw_polyline(pts, Color(0.45, 0.28, 0.02), 2.0)
+	GameData.disc(cv, c + Vector2(0, 3) * sc, 2.6 * sc, Color(1, 0.2, 0.3))
+
+
+## Madalya: kurdele + sıra numaralı disk.
+func _draw_medal(c: Vector2, r: float, col: Color, rank: int) -> void:
+	var rib := Color(0.8, 0.15, 0.2) if rank == 2 else Color(0.2, 0.4, 0.85)
+	cv.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.9, -r * 1.6), c + Vector2(-r * 0.2, -r * 1.6), c + Vector2(r * 0.2, -r * 0.4), c + Vector2(-r * 0.4, -r * 0.4)]), rib)
+	cv.draw_colored_polygon(PackedVector2Array([c + Vector2(r * 0.9, -r * 1.6), c + Vector2(r * 0.2, -r * 1.6), c + Vector2(-r * 0.2, -r * 0.4), c + Vector2(r * 0.4, -r * 0.4)]), rib.darkened(0.2))
+	GameData.disc(cv, c + Vector2(0, r * 0.25), r, col.darkened(0.35))
+	GameData.disc(cv, c + Vector2(0, r * 0.15), r * 0.85, col)
+	var fs := int(r * 1.15)
+	_text(Vector2(c.x - r, c.y + r * 0.15 + fs * 0.36), str(rank), fs, Color(0.15, 0.12, 0.1), HORIZONTAL_ALIGNMENT_CENTER, r * 2.0)
 
 ## Alt orta: iki büyük mod butonu (başlık + açıklama).
 func _draw_mode_buttons(s: Vector2, t: float) -> void:
