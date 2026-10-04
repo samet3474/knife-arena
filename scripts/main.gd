@@ -104,7 +104,8 @@ var save := {"skin_id": "skin_keloglan", "knife_id": "knife_steel", "total_kills
 	"coins": GameData.STARTING_COINS, "owned": [], "player_name": "", "last_daily": "",
 	"level": 1, "xp": 0, "mp_host": "", "acc_id": "acc_none",
 	"quest_day": "", "quest_ids": [], "quest_prog": [], "quest_claimed": [], "top": {},
-	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0}
+	"sp_kills": 0, "sp_wins": 0, "mp_kills": 0, "mp_best": 0, "sp_coins": 0, "mp_coins": 0,
+	"chat_cache": [], "chat_rev": 0, "conn_cache": []}
 
 # Çok oyunculu
 var net_mode := ""
@@ -131,7 +132,7 @@ var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
 var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
 var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
-const NET_VERSION := 4
+const NET_VERSION := 5
 var test_move := false # test: karakter kendiliğinden yürür, konum ve görüntü sayısı yazılır
 var test_snaps := 0
 var test_timer := 0.0
@@ -2031,9 +2032,9 @@ func _start_server(args: PackedStringArray) -> void:
 	add_child(cloud)
 	if cloud.enabled:
 		slog("Bulut kaydı açık (GitHub Gist)", Color(0.6, 0.85, 1))
-		cloud.load_state(_apply_cloud)
+		cloud.load_state(_apply_cloud, func(text: String) -> void: slog(text, Color(1, 0.75, 0.4)))
 	else:
-		slog("Bulut kaydı kapalı (GIST_ID / GIST_TOKEN yok)", Color(1, 0.75, 0.4))
+		slog("Bulut kaydı kapalı (GIST_TOKEN yok)", Color(1, 0.75, 0.4))
 	for i in bot_target:
 		_spawn_bot(BOT_NAMES.pick_random())
 	slog("Sunucu başlatıldı (sürüm %d)" % NET_VERSION, Color(0.5, 1, 0.6))
@@ -2177,6 +2178,7 @@ func _load_records() -> void:
 		lb_epoch = int(d.get("epoch", 0))
 		if d.get("conn") is Array:
 			conn_log = d["conn"]
+		_restore_chat(d)
 	else:
 		records = d # eski biçim: doğrudan kayıtlar
 	# Eski alanlar: "k" (toplam leş) → tek oyunculu leş, "c" (altın) → tek oyunculu altın
@@ -2185,6 +2187,19 @@ func _load_records() -> void:
 			r["sk"] = r["k"]
 		if r is Dictionary and r.has("c") and not r.has("sc"):
 			r["sc"] = r["c"]
+
+
+## Sohbet, susturulanlar ve sohbet kilidi kayıttan geri yüklenir.
+func _restore_chat(d: Dictionary) -> void:
+	if d.get("chat") is Array:
+		chat_log = d["chat"]
+	chat_next_id = maxi(chat_next_id, int(d.get("chat_id", 1)))
+	for m in chat_log:
+		chat_next_id = maxi(chat_next_id, int(m.get("id", 0)) + 1)
+	chat_rev = maxi(chat_rev, int(d.get("chat_rev", 0)))
+	if d.get("muted") is Dictionary:
+		muted = d["muted"]
+	chat_locked = bool(d.get("chat_locked", chat_locked))
 
 
 func _save_records() -> void:
@@ -2247,8 +2262,14 @@ var sessions := {} # bağlantı → {"n", "dev", "loc", "since", "where"}
 var cloud = null # cloud_store.gd (GIST_ID + GIST_TOKEN ortam değişkenleri varsa)
 
 
+## Kaydı tanımlayan anahtar (aynı kaydın iki kez eklenmemesi için).
+func _conn_key(c: Dictionary) -> String:
+	return "%s|%s|%s|%s" % [c.get("t", ""), c.get("n", ""), c.get("ev", ""), c.get("dev", "")]
+
+
 func _state_dict() -> Dictionary:
-	return {"epoch": lb_epoch, "records": records, "conn": conn_log}
+	return {"epoch": lb_epoch, "records": records, "conn": conn_log, "chat": chat_log, "chat_id": chat_next_id,
+		"chat_rev": chat_rev, "muted": muted, "chat_locked": chat_locked}
 
 
 func _now_str() -> String:
@@ -2307,10 +2328,20 @@ func _apply_cloud(d: Dictionary) -> void:
 		# Bulutta daha uzun geçmiş var: onu al, bu oturumda eklenenleri sona ekle
 		var mine := conn_log.duplicate()
 		conn_log = d["conn"]
+		var have := {}
+		for c in conn_log:
+			have[_conn_key(c)] = true
 		for c in mine:
-			if not c in conn_log:
+			if not have.has(_conn_key(c)):
 				conn_log.append(c)
-	slog("Bulut kaydı yüklendi (%d oyuncu, %d giriş kaydı)" % [records.size(), conn_log.size()], Color(0.6, 0.85, 1))
+	# Sohbet: buluttaki daha yeni (rev) ya da yerelde hiç yoksa buluttaki geçerli
+	if int(d.get("chat_rev", 0)) > chat_rev or (chat_log.is_empty() and d.get("chat") is Array):
+		_restore_chat(d)
+	elif d.get("muted") is Dictionary:
+		for k in d["muted"].keys():
+			muted[k] = d["muted"][k]
+	slog("Bulut kaydı yüklendi (%d oyuncu, %d giriş kaydı, %d mesaj)" % [records.size(), conn_log.size(), chat_log.size()],
+		Color(0.6, 0.85, 1))
 	_save_records()
 
 
@@ -2369,9 +2400,34 @@ var chat_locked := false # yönetici sohbeti kapattı mı
 var muted := {} # susturulan isimler (küçük harf) → gösterilen isim
 
 
-func server_chat_join(peer: int, _player_name: String) -> void:
+func server_chat_join(peer: int, _player_name: String, cache: Dictionary) -> void:
 	chat_peers[peer] = true
+	# Sunucu sohbeti kaybetmişse (yeniden başladı, bulut kaydı yok) oyuncunun elindeki son kopyadan geri kur.
+	# Yönetici daha sonra sohbeti değiştirdiyse (daha yeni rev) eski kopya kabul edilmez.
+	if chat_log.is_empty() and int(cache.get("rev", 0)) >= chat_rev and cache.get("msgs") is Array:
+		for m in (cache["msgs"] as Array).slice(-CHAT_KEEP):
+			if not m is Dictionary:
+				continue
+			var n := String(m.get("n", "")).strip_edges().left(14)
+			var msg := String(m.get("m", "")).strip_edges().left(120)
+			if n == "" or msg == "" or muted.has(n.to_lower()):
+				continue
+			chat_log.append({"id": chat_next_id, "n": n, "m": msg, "a": n == "YÖNETİCİ"})
+			chat_next_id += 1
+		if not chat_log.is_empty():
+			chat_rev = maxi(chat_rev, int(cache.get("rev", 0)))
+			slog("Sohbet oyuncunun kopyasından geri yüklendi (%d mesaj)" % chat_log.size(), Color(0.6, 0.85, 1))
+			_save_records()
 	net.s_chat.rpc_id(peer, chat_log, true)
+
+
+var chat_rev := 0 # yönetici sohbeti değiştirdikçe (sil/temizle/sustur) artar: eski kopyalar geri gelmesin
+
+
+## Yönetici sohbette bir şeyi değiştirdi: yeni sürüm damgası ve kayıt.
+func _chat_changed() -> void:
+	chat_rev = maxi(chat_rev + 1, int(Time.get_unix_time_from_system()))
+	_save_records()
 
 
 func _chat_add(fname: String, msg: String, admin := false) -> void:
@@ -2380,6 +2436,7 @@ func _chat_add(fname: String, msg: String, admin := false) -> void:
 	chat_log.append(m)
 	while chat_log.size() > CHAT_KEEP:
 		chat_log.pop_front()
+	_save_records()
 	for p in chat_peers.keys():
 		if multiplayer.get_peers().has(p):
 			net.s_chat.rpc_id(p, [m], false)
@@ -2402,12 +2459,36 @@ func server_chat(peer: int, player_name: String, text: String) -> void:
 	var msg := text.strip_edges().replace("\n", " ").left(CHAT_MAX_LEN)
 	if fname == "" or msg == "" or muted.has(fname.to_lower()):
 		return
+	# Oyuncular yönetici gibi görünemez
+	if fname.to_upper() in ["YÖNETİCİ", "YONETICI", "ADMIN", "YÖNETICI"]:
+		return
 	chat_last[peer] = now
 	_chat_add(fname, msg)
 	slog("[sohbet] %s: %s" % [fname, msg], Color(0.75, 0.85, 1))
 
 
 ## Yönetici duyurusu: sohbete "YÖNETİCİ" olarak düşer ve oyundaki/menüdeki herkese büyük yazı çıkar.
+## Yöneticinin elindeki giriş/çıkış kayıtları: sunucuda eksik olanlar geri eklenir.
+func server_admin_seed(peer: int, conn: Array) -> void:
+	if not admin_peers.has(peer):
+		return
+	var have := {}
+	for c in conn_log:
+		have[_conn_key(c)] = true
+	var added := 0
+	var older := []
+	for c in conn.slice(-CONN_KEEP):
+		if c is Dictionary and not have.has(_conn_key(c)):
+			older.append(c)
+			added += 1
+	if added > 0:
+		conn_log = older + conn_log
+		while conn_log.size() > CONN_KEEP:
+			conn_log.pop_front()
+		slog("Yöneticinin kopyasından %d giriş kaydı geri yüklendi" % added, Color(0.6, 0.85, 1))
+		_save_records()
+
+
 func server_admin_say(peer: int, text: String) -> void:
 	if peer != 0 and not admin_peers.has(peer):
 		return
@@ -2448,6 +2529,7 @@ func top_lists() -> Dictionary:
 	out["online"] = peers.size()
 	out["e"] = lb_epoch
 	out["chat_locked"] = chat_locked
+	out["chat_rev"] = chat_rev
 	for stat in ["sk", "sc", "mk", "mc", "l"]:
 		all.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.get(stat, 0)) > int(b.get(stat, 0)))
 		var rows := []
@@ -2542,10 +2624,12 @@ func _admin(id: String) -> void:
 		slog("Skor tablosu sıfırlandı", Color(1, 0.5, 0.45))
 	elif id == "adm_chatclear":
 		chat_log.clear()
+		_chat_changed()
 		_chat_resend()
 		slog("Sohbet temizlendi", Color(1, 0.75, 0.4))
 	elif id == "adm_chatlock":
 		chat_locked = not chat_locked
+		_chat_changed()
 		_chat_add("YÖNETİCİ", "Sohbet kapatıldı." if chat_locked else "Sohbet yeniden açıldı.", true)
 		_push_top()
 		slog("Sohbet: %s" % ("KAPALI" if chat_locked else "AÇIK"), Color(1, 0.75, 0.4))
@@ -2564,6 +2648,7 @@ func _admin(id: String) -> void:
 		else:
 			chat_log = chat_log.filter(func(m: Dictionary) -> bool: return int(m.get("id", -1)) != mid)
 			slog("Sohbet mesajı silindi (%s)" % who, Color(1, 0.75, 0.4))
+		_chat_changed()
 		_chat_resend()
 	elif id.begins_with("adm_unmute_"):
 		var keys := muted.keys()
@@ -2571,6 +2656,7 @@ func _admin(id: String) -> void:
 		if i >= 0 and i < keys.size():
 			slog("%s susturması kaldırıldı" % muted[keys[i]], Color(0.5, 1, 0.6))
 			muted.erase(keys[i])
+			_chat_changed()
 	else:
 		# Oyuncuya yönelik komutlar: adm_<işlem>_<bağlantı>
 		var parts := id.split("_")
@@ -2780,6 +2866,7 @@ func client_top(data: Dictionary) -> void:
 		lobby_state = "ready"
 	online_count = int(data.get("online", 0))
 	save["top"] = data
+	save["chat_rev"] = int(data.get("chat_rev", save["chat_rev"]))
 	lb_fetched_at = Time.get_ticks_msec() / 1000.0
 	_write_save()
 
@@ -2796,6 +2883,9 @@ func client_chat(msgs: Array, reset: bool) -> void:
 			chat.append({"n": String(m.get("n", "?")), "m": String(m.get("m", "")), "a": bool(m.get("a", false))})
 	while chat.size() > CHAT_KEEP:
 		chat.pop_front()
+	# Son sohbetin kopyası: sunucu yeniden başlayıp sohbeti kaybederse geri yüklensin
+	save["chat_cache"] = chat.duplicate(true)
+	_write_save()
 	if not reset and not msgs.is_empty() and state == "menu":
 		sfx.play("click", -10.0, 0.0)
 
@@ -2822,7 +2912,8 @@ func _on_net_connected() -> void:
 		lobby_connected_at = Time.get_ticks_msec() / 1000.0
 		lb_fetched_at = Time.get_ticks_msec() / 1000.0
 		net.c_top.rpc_id(1, _top_info(), save["top"] if save["top"] is Dictionary else {})
-		net.c_chat_join.rpc_id(1, String(save["player_name"]).strip_edges())
+		net.c_chat_join.rpc_id(1, String(save["player_name"]).strip_edges(),
+			{"rev": int(save["chat_rev"]), "msgs": save["chat_cache"]})
 		return
 	if net_mode != "client":
 		return
@@ -3666,7 +3757,7 @@ func admin_data() -> Dictionary:
 		"zone": zone_on, "zone_r": int(zone_radius),
 		"chat": chat_log.slice(maxi(0, chat_log.size() - 14)), "chat_locked": chat_locked, "muted": muted.values(),
 		"lb_count": records.size(), "menu_count": chat_peers.size(), "cloud": cloud != null and cloud.enabled,
-		"conn": conn_log.slice(maxi(0, conn_log.size() - 40)),
+		"conn": conn_log.slice(maxi(0, conn_log.size() - 80)),
 	}
 
 
@@ -3687,6 +3778,8 @@ func client_admin_result(ok: bool) -> void:
 	if ok:
 		state = "admin"
 		sfx.play("unlock", 0.0, 0.0)
+		if save["conn_cache"] is Array and not save["conn_cache"].is_empty():
+			net.c_admin_seed.rpc_id(1, save["conn_cache"])
 	else:
 		_leave_multiplayer()
 		_start_round(false)
@@ -3695,3 +3788,8 @@ func client_admin_result(ok: bool) -> void:
 
 func client_admin_state(data: Dictionary) -> void:
 	admin_view = data
+	# Giriş/çıkış kayıtlarının kopyası yöneticide de durur (sunucu kaydı kaybederse geri yüklenir)
+	var conn = data.get("conn", [])
+	if conn is Array and not conn.is_empty() and conn != save["conn_cache"]:
+		save["conn_cache"] = conn
+		_write_save()

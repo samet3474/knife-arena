@@ -169,10 +169,18 @@ func s_top(data: Dictionary) -> void:
 
 
 ## Genel sohbet (yalnızca ana menüde): katılınca geçmiş gelir, sonra yeni mesajlar.
+## cache: oyuncunun elindeki son sohbet kopyası (sunucu sohbeti kaybettiyse geri yüklenir).
 @rpc("any_peer", "reliable")
-func c_chat_join(player_name: String) -> void:
+func c_chat_join(player_name: String, cache: Dictionary) -> void:
 	if multiplayer.is_server():
-		main.server_chat_join(multiplayer.get_remote_sender_id(), player_name)
+		main.server_chat_join(multiplayer.get_remote_sender_id(), player_name, cache)
+
+
+## Yöneticinin elindeki giriş/çıkış kayıtları (sunucu kayıtları kaybettiyse geri yüklenir).
+@rpc("any_peer", "reliable")
+func c_admin_seed(conn: Array) -> void:
+	if multiplayer.is_server():
+		main.server_admin_seed(multiplayer.get_remote_sender_id(), conn)
 
 
 @rpc("any_peer", "reliable")
