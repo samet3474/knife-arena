@@ -99,6 +99,7 @@ func _create_name_edit() -> void:
 	name_edit.text_changed.connect(_on_name_changed)
 	name_edit.text_submitted.connect(_on_name_submitted)
 	name_edit.focus_exited.connect(_on_name_focus_exited)
+	name_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(name_edit, Loc.t("name_placeholder")))
 	add_child(name_edit)
 
 
@@ -119,8 +120,24 @@ func _create_admin_edit() -> void:
 		sb.content_margin_right = 14
 		admin_edit.add_theme_stylebox_override(style_name, sb)
 	admin_edit.text_submitted.connect(func(_t: String) -> void: _on_button("admin_go"))
+	admin_edit.focus_entered.connect(func() -> void: _web_prompt.call_deferred(admin_edit, Loc.t("admin_password")))
 	admin_edit.visible = false
 	add_child(admin_edit)
+
+
+## Telefon tarayıcıları ekran klavyesini yalnızca dokunuşun hemen içinde açar; Godot'nun
+## yazı kutusu bunu kaçırdığı için telefonda tarayıcının kendi yazı penceresi (prompt) açılır.
+func _web_prompt(edit: LineEdit, title: String) -> void:
+	if not OS.has_feature("web") or not DisplayServer.is_touchscreen_available():
+		return
+	edit.release_focus()
+	var cur := JSON.stringify(edit.text if not edit.secret else "")
+	var res = JavaScriptBridge.eval("window.prompt(%s, %s)" % [JSON.stringify(title), cur], true)
+	if not res is String:
+		return # vazgeçildi
+	edit.text = String(res).strip_edges().left(edit.max_length)
+	edit.text_changed.emit(edit.text)
+	edit.text_submitted.emit(edit.text)
 
 
 func _on_name_changed(text: String) -> void:
@@ -129,6 +146,7 @@ func _on_name_changed(text: String) -> void:
 
 func _on_name_submitted(_text: String) -> void:
 	name_edit.release_focus()
+	main._write_save()
 
 
 func _on_name_focus_exited() -> void:

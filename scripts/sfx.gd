@@ -6,8 +6,14 @@ const SOUND_DIR := "res://assets/sounds/"
 const VARIANTS := {"throw": 2, "pickup": 3, "step": 4, "clash": 5, "hit": 5, "death": 5, "block": 5, "coin": 2}
 const SINGLES := ["click", "select", "error", "powerup", "kill", "zone", "win", "lose", "unlock", "buy"]
 ## Seslerin temel ses seviyeleri (dB); dosyalar arasındaki farkı dengeler.
-const BASE_DB := {"pickup": -14.0, "step": -16.0, "throw": -4.0, "clash": -6.0, "block": -6.0, "hit": -2.0,
-	"death": 0.0, "click": -6.0, "select": -6.0, "powerup": -4.0, "kill": -2.0, "zone": -2.0}
+## Sık çalan sesler (adım, bıçak çarpışması, toplama) kulağı yormasın diye kısık.
+const BASE_DB := {"pickup": -17.0, "step": -21.0, "throw": -8.0, "clash": -11.0, "block": -10.0, "hit": -5.0,
+	"death": -3.0, "click": -8.0, "select": -8.0, "powerup": -5.0, "kill": -3.0, "zone": -4.0, "coin": -6.0,
+	"win": -2.0, "lose": -4.0, "unlock": -3.0, "buy": -4.0, "error": -8.0}
+## Aynı sesin tekrar çalınabilmesi için gereken süre (ms): üst üste binen sesler cızırtı gibi duyulur.
+const MIN_GAP := {"clash": 90, "pickup": 70, "step": 120, "hit": 60, "block": 90, "coin": 60}
+## Aynı anda en fazla kaç kopyası çalabilir.
+const MAX_SAME := 3
 
 var enabled := true
 var streams := {}
@@ -17,8 +23,15 @@ var last_played := {}
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	# Web: HTTPS'te tarayıcının kendi ses motoru (Web Audio "sample") temiz ve takılmasız çalar.
+	# Yerel ağdaki düz HTTP'de bu kullanılamadığı için eski "stream" yöntemine düşülür.
+	var playback := AudioServer.PLAYBACK_TYPE_DEFAULT
+	if OS.has_feature("web"):
+		var secure = JavaScriptBridge.eval("window.isSecureContext && !!(window.AudioContext || window.webkitAudioContext)", true)
+		playback = AudioServer.PLAYBACK_TYPE_SAMPLE if secure == true else AudioServer.PLAYBACK_TYPE_STREAM
 	for i in 16:
 		var p := AudioStreamPlayer.new()
+		p.playback_type = playback
 		add_child(p)
 		players.append(p)
 	for sound in VARIANTS:
@@ -34,16 +47,23 @@ func _ready() -> void:
 			streams[sound] = [load(path)]
 
 
-func play(sound: String, volume_db := 0.0, pitch_var := 0.08) -> void:
+func play(sound: String, volume_db := 0.0, pitch_var := 0.05) -> void:
 	if not enabled or not streams.has(sound) or (streams[sound] as Array).is_empty():
 		return
 	var now := Time.get_ticks_msec()
-	if now - int(last_played.get(sound, -1000)) < 35:
+	if now - int(last_played.get(sound, -1000)) < int(MIN_GAP.get(sound, 40)):
+		return
+	var list: Array = streams[sound]
+	var same := 0
+	for p in players:
+		if p.playing and p.stream in list:
+			same += 1
+	if same >= MAX_SAME:
 		return
 	last_played[sound] = now
 	for p in players:
 		if not p.playing:
-			p.stream = (streams[sound] as Array).pick_random()
+			p.stream = list.pick_random()
 			p.volume_db = volume_db + float(BASE_DB.get(sound, 0.0))
 			p.pitch_scale = randf_range(1.0 - pitch_var, 1.0 + pitch_var)
 			p.play()
