@@ -38,6 +38,8 @@ var multi := 0 # kısa sürede art arda alınan leş sayısı
 var knife_kind := 0
 var accessory := 0 # GameData.ACCESSORIES sırası (seviye eşyası)
 var bombs := 0 # elde tutulan bomba sayısı; fırlatınca önce bomba atılır
+var skin_fx := "" # karaktere özel parçacık efekti
+var aura_col := Color(0, 0, 0, 0) # ayak altındaki parlayan halka rengi (efektli karakterler)
 var boss := false # Dev Boss: büyük gövde, çok can, yavaş
 
 const BOSS_SCALE := 1.5
@@ -107,6 +109,10 @@ func _ready() -> void:
 
 
 func _setup_sprite() -> void:
+	# Karaktere özel efekt ve aura rengi (GameData.SKINS "fx" / "aura")
+	var info: Dictionary = GameData.SKINS[GameData.skin_index(skin_id)]
+	skin_fx = String(info.get("fx", ""))
+	aura_col = info.get("aura", Color(0, 0, 0, 0))
 	var sheet := GameData.tex(skin_id + "_walk")
 	if sheet != null:
 		body.texture = sheet
@@ -320,6 +326,14 @@ func _draw_body() -> void:
 		GameData.disc(self, Vector2(0, -6), BODY_RADIUS + 14.0, Color(1, 0.15, 0.1, 0.12 + pulse * 0.1))
 	if slow_t > 0.0:
 		draw_arc(Vector2(0, -6), BODY_RADIUS + 10.0, 0.0, TAU, 32, Color(0.5, 0.75, 1, 0.6), 3.0)
+
+	# Efektli karakterlerde ayak altında yavaşça nabız gibi atan renkli aura
+	if aura_col.a > 0.0 and not concealed:
+		var pulse := 0.5 + 0.5 * sin(idle_time * 3.0)
+		draw_set_transform(Vector2(0, body_r() * 0.75), 0.0, Vector2(1.0, 0.4))
+		GameData.disc(self, Vector2.ZERO, body_r() * (1.6 + pulse * 0.2), Color(aura_col, 0.16 + pulse * 0.1))
+		draw_arc(Vector2.ZERO, body_r() * (1.5 + pulse * 0.25), 0.0, TAU, 40, Color(aura_col, 0.35 * (1.0 - pulse) + 0.1), 3.0)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	# Gölge ve takım rengi halkası
 	draw_set_transform(Vector2(0, body_r() * 0.75), 0.0, Vector2(1.0, 0.4))

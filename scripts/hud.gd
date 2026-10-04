@@ -4,9 +4,12 @@ extends Control
 ## mini harita, skor tablosu, leş akışı, duraklatma ve oyun sonu ekranları.
 ## Butonlar her karede çizilirken kaydedilir; dokunuşlar bu listeye göre kontrol edilir.
 
-const JOY_RADIUS := 85.0
-const THROW_RADIUS := 86.0
-const DASH_RADIUS := 54.0
+const JOY_RADIUS := 118.0 # geniş joystick: telefonda başparmakla rahat kontrol
+const JOY_KNOB := 48.0
+const JOY_FULL := 0.65 # yarıçapın bu oranında tam hız (az sürüklemek yeter)
+const JOY_DEAD := 0.08 # bu oranın altı yok sayılır (titreme)
+const THROW_RADIUS := 96.0
+const DASH_RADIUS := 60.0
 const GOLD := Color(1, 0.85, 0.3)
 const PANEL_BG := Color(0.05, 0.08, 0.11, 0.85)
 const CARDS_PER_PAGE := 8
@@ -268,7 +271,10 @@ func flash_banner(text: String, col := Color(1, 0.4, 0.35), duration := 2.2) -> 
 func joy_vector() -> Vector2:
 	if joy_index < 0:
 		return Vector2.ZERO
-	return ((joy_pos - joy_origin) / JOY_RADIUS).limit_length(1.0)
+	var off := (joy_pos - joy_origin) / JOY_RADIUS
+	if off.length() < JOY_DEAD:
+		return Vector2.ZERO
+	return (off / JOY_FULL).limit_length(1.0)
 
 
 func throw_held() -> bool:
@@ -285,17 +291,17 @@ func _left_w() -> float:
 
 func _throw_center() -> Vector2:
 	var s := _screen()
-	return Vector2(s.x - 150.0, s.y - 160.0)
+	return Vector2(s.x - 160.0, s.y - 170.0)
 
 
 func _dash_center() -> Vector2:
 	var s := _screen()
 	# Alt kenardan uzak: iPhone'da en alttaki şerit sistem hareketlerine (ana ekran) ayrılmış
-	return Vector2(s.x - 320.0, s.y - 112.0)
+	return Vector2(s.x - 350.0, s.y - 116.0)
 
 
 func _joy_rest() -> Vector2:
-	return Vector2(170.0, _screen().y - 170.0)
+	return Vector2(190.0, _screen().y - 190.0)
 
 
 # --- Girdi -------------------------------------------------------------------
@@ -1448,6 +1454,10 @@ func _draw_shop_preview(r: Rect2, t: float) -> void:
 	_text_fit(Vector2(r.position.x, ny), Loc.t(id + ".name"), 26, Color.WHITE, r.size.x)
 	if tab == "characters":
 		_text_fit(Vector2(r.position.x, ny + 26), Loc.t(id + ".desc"), 14, col.lightened(0.4), r.size.x)
+		var fx := String(item.get("fx", ""))
+		if fx != "":
+			var ac: Color = item.get("aura", GOLD)
+			_text_fit(Vector2(r.position.x, ny + 48), "✦ " + Loc.t("fx_label") % Loc.t("fx_" + fx), 13, ac.lightened(0.3), r.size.x)
 	elif item.get("female", false):
 		_text_fit(Vector2(r.position.x, ny + 26), Loc.t("female_only"), 14, Color(1, 0.55, 0.8), r.size.x)
 	# Durum ve işlem butonu
@@ -1946,10 +1956,17 @@ func _draw_controls(s: Vector2) -> void:
 	GameData.disc(cv, base, JOY_RADIUS + 6.0, Color(0, 0, 0, 0.15 * alpha))
 	GameData.disc(cv, base, JOY_RADIUS, Color(1, 1, 1, 0.1 * alpha))
 	cv.draw_arc(base, JOY_RADIUS, 0.0, TAU, 48, Color(1, 1, 1, 0.35 * alpha), 3.0)
-	var knob := base + joy_vector() * JOY_RADIUS
-	GameData.disc(cv, knob + Vector2(0, 4), 38.0, Color(0, 0, 0, 0.2 * alpha))
-	GameData.disc(cv, knob, 38.0, Color(1, 1, 1, 0.55 * alpha))
-	cv.draw_arc(knob, 38.0, 0.0, TAU, 32, Color(1, 1, 1, 0.8 * alpha), 2.0)
+	# Tutamak parmağın olduğu yerde (halkanın içinde) durur; yön oku hareket yönünü gösterir
+	var knob := base + ((joy_pos - joy_origin).limit_length(JOY_RADIUS) if joy_index >= 0 else Vector2.ZERO)
+	var v := joy_vector()
+	if v != Vector2.ZERO:
+		var tip := base + v.normalized() * (JOY_RADIUS + 14.0)
+		var side := v.normalized().orthogonal() * 12.0
+		cv.draw_colored_polygon(PackedVector2Array([tip, tip - v.normalized() * 18.0 + side, tip - v.normalized() * 18.0 - side]),
+			Color(1, 1, 1, 0.75))
+	GameData.disc(cv, knob + Vector2(0, 4), JOY_KNOB, Color(0, 0, 0, 0.2 * alpha))
+	GameData.disc(cv, knob, JOY_KNOB, Color(1, 1, 1, 0.55 * alpha))
+	cv.draw_arc(knob, JOY_KNOB, 0.0, TAU, 32, Color(1, 1, 1, 0.8 * alpha), 2.0)
 
 	var p: Fighter = main.player
 	var c := _throw_center()

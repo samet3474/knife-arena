@@ -7,19 +7,19 @@ extends RefCounted
 ## face: yürüme animasyonunda karakterin baktığı yön (1 = sağ, -1 = sol, 0 = önden).
 const SKINS := [
 	{"id": "skin_keloglan", "price": 0, "level": 1, "face": 0, "color": Color(0.9, 0.3, 0.25)},
-	{"id": "skin_ninja", "price": 0, "level": 1, "face": 0, "color": Color(0.85, 0.2, 0.2)},
+	{"id": "skin_ninja", "price": 0, "level": 1, "face": 0, "color": Color(0.85, 0.2, 0.2), "fx": "shadow", "aura": Color(0.55, 0.3, 0.75)},
 	{"id": "skin_knight", "price": 0, "level": 1, "face": -1, "color": Color(0.3, 0.5, 0.95)},
-	{"id": "skin_frog", "price": 80, "level": 1, "face": -1, "color": Color(0.3, 0.8, 0.3)},
-	{"id": "skin_pehlivan", "price": 120, "level": 2, "face": 0, "color": Color(0.75, 0.5, 0.25)},
-	{"id": "skin_pirate", "price": 160, "level": 3, "face": 1, "color": Color(0.75, 0.15, 0.25)},
+	{"id": "skin_frog", "price": 80, "level": 1, "face": -1, "color": Color(0.3, 0.8, 0.3), "fx": "bubble", "aura": Color(0.4, 0.95, 0.5)},
+	{"id": "skin_pehlivan", "price": 120, "level": 2, "face": 0, "color": Color(0.75, 0.5, 0.25), "fx": "dust", "aura": Color(0.9, 0.75, 0.5)},
+	{"id": "skin_pirate", "price": 160, "level": 3, "face": 1, "color": Color(0.75, 0.15, 0.25), "fx": "sea", "aura": Color(0.5, 0.85, 1.0)},
 	{"id": "skin_hoca", "price": 220, "level": 4, "face": 0, "color": Color(0.35, 0.7, 0.4)},
-	{"id": "skin_zeybek", "price": 280, "level": 5, "face": 0, "color": Color(0.85, 0.2, 0.3)},
-	{"id": "skin_samurai", "price": 350, "level": 7, "face": 0, "color": Color(0.95, 0.4, 0.1)},
-	{"id": "skin_yeniceri", "price": 450, "level": 9, "face": 1, "color": Color(0.3, 0.45, 0.9)},
-	{"id": "skin_viking", "price": 550, "level": 11, "face": 0, "color": Color(0.9, 0.65, 0.2)},
-	{"id": "skin_gokturk", "price": 700, "level": 14, "face": 0, "color": Color(0.3, 0.75, 0.95)},
-	{"id": "skin_sultan", "price": 900, "level": 18, "face": 0, "color": Color(1.0, 0.8, 0.25)},
-	{"id": "skin_lale", "price": 250, "level": 3, "face": 0, "color": Color(1.0, 0.42, 0.72), "female": true},
+	{"id": "skin_zeybek", "price": 280, "level": 5, "face": 0, "color": Color(0.85, 0.2, 0.3), "fx": "ember", "aura": Color(1.0, 0.5, 0.2)},
+	{"id": "skin_samurai", "price": 350, "level": 7, "face": 0, "color": Color(0.95, 0.4, 0.1), "fx": "petal", "aura": Color(1.0, 0.6, 0.75)},
+	{"id": "skin_yeniceri", "price": 450, "level": 9, "face": 1, "color": Color(0.3, 0.45, 0.9), "fx": "gold", "aura": Color(1.0, 0.85, 0.3)},
+	{"id": "skin_viking", "price": 550, "level": 11, "face": 0, "color": Color(0.9, 0.65, 0.2), "fx": "frost", "aura": Color(0.6, 0.9, 1.0)},
+	{"id": "skin_gokturk", "price": 700, "level": 14, "face": 0, "color": Color(0.3, 0.75, 0.95), "fx": "wind", "aura": Color(0.6, 1.0, 0.95)},
+	{"id": "skin_sultan", "price": 900, "level": 18, "face": 0, "color": Color(1.0, 0.8, 0.25), "fx": "gold", "aura": Color(1.0, 0.8, 0.25)},
+	{"id": "skin_lale", "price": 250, "level": 3, "face": 0, "color": Color(1.0, 0.42, 0.72), "female": true, "fx": "heart", "aura": Color(1.0, 0.45, 0.75)},
 ]
 
 ## Bıçak türleri (görsel). tex: sprite adı; yoksa çelik bıçak "color" ile boyanır.

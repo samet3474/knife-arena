@@ -16,15 +16,15 @@ const WEB_SCRIPT := preload("res://scripts/web_server.gd")
 const CLOUD_SCRIPT := preload("res://scripts/cloud_store.gd")
 
 const SAVE_PATH := "user://save.cfg"
-const ARENA_RADIUS := 1800.0
-const ZONE_MIN_RADIUS := 380.0
+const ARENA_RADIUS := 2600.0 # büyük harita: rakiplerle hemen karşılaşılmasın
+const ZONE_MIN_RADIUS := 450.0
 const ZONE_DELAY := 25.0
-const ZONE_DURATION := 150.0
+const ZONE_DURATION := 170.0
 const ZONE_DPS := 12.0
-const BOT_COUNT := 11
-const PICKUP_TARGET := 150
+const BOT_COUNT := 13
+const PICKUP_TARGET := 260
 const PICKUP_RADIUS := 42.0
-const POWERUP_MAX := 6
+const POWERUP_MAX := 10
 const POWERUP_RADIUS := 46.0
 const START_KNIVES := 5
 const SPAWN_SHIELD := 4.0 # yeni doğan oyuncunun koruma süresi (sn)
@@ -48,10 +48,10 @@ const AIM_ASSIST_ANGLE := 0.6
 const HEARING_RANGE := 1100.0
 const FX_RANGE := 1400.0
 const AIM_RANGE := 650.0
-const CRATE_TARGET := 22
+const CRATE_TARGET := 40
 const CRATE_SIZE := 52.0
 const CRATE_HP := 3
-const BUSH_COUNT := 14
+const BUSH_COUNT := 26
 const BUSH_REVEAL := 160.0
 const SNAPSHOT_RATE := 20.0
 const INPUT_RATE := 30.0
@@ -82,7 +82,7 @@ var zone_radius := ARENA_RADIUS
 var zone_on := false # sunucu: yönetici alan daralmasını açtı mı
 var zone_start := 0.0
 const ZONE_MP_DURATION := 120.0
-const ZONE_MP_MIN := 650.0
+const ZONE_MP_MIN := 800.0
 var zone_announced := false
 var round_time := 0.0
 var state := "menu" # splash | menu | connecting | playing | paused | over | won | server
@@ -903,7 +903,7 @@ func _free_spawn_point() -> Vector2:
 
 ## Telefonda yerde daha az bıçak (simülasyon ve çizim yükü azalır).
 func _pickup_target() -> int:
-	return 110 if low_fx else PICKUP_TARGET
+	return 190 if low_fx else PICKUP_TARGET
 
 
 func _random_point(radius: float) -> Vector2:
@@ -1044,7 +1044,36 @@ func _fighter_visual_fx(f: Fighter, delta: float) -> void:
 		_fx_smoke(f.position, 1, Color(1, 0.3, 0.3, 0.5))
 	if f.moving and randf() < delta * 7.0 and _near_camera(f.position):
 		_fx_dust(f.position + Vector2(randf_range(-10, 10), Fighter.BODY_RADIUS * 0.7))
+	_skin_fx(f, delta)
 	_knife_fx(f, delta)
+
+
+## Karakterlere özel efekt: yürürken (ve hafifçe dururken) karakterin etrafında parçacıklar.
+func _skin_fx(f: Fighter, delta: float) -> void:
+	if f.skin_fx == "" or f.concealed or net_mode == "server" or not _near_camera(f.position):
+		return
+	var rate := (9.0 if f.moving else 2.5) * (0.5 if low_fx else 1.0)
+	if randf() > delta * rate:
+		return
+	var col := f.aura_col
+	var pos := f.position + Vector2(randf_range(-22, 22), randf_range(-40, 20))
+	match f.skin_fx:
+		"shadow", "wind", "dust":
+			var c := Color(col, 0.35) if f.skin_fx != "dust" else Color(0.85, 0.75, 0.55, 0.45)
+			particles.append({"kind": "smoke", "pos": pos + Vector2(0, 20), "vel": -f.move_dir * 40.0 + Vector2(0, -15),
+				"life": 0.7, "max": 0.7, "col": c, "r": randf_range(6.0, 11.0)})
+		"bubble", "sea":
+			particles.append({"kind": "bubble", "pos": pos, "vel": Vector2(randf_range(-12, 12), randf_range(-50, -25)),
+				"life": 0.8, "max": 0.8, "col": col, "r": randf_range(3.0, 6.0)})
+		"ember":
+			particles.append({"kind": "ember", "pos": pos, "vel": Vector2(randf_range(-25, 25), randf_range(-80, -40)),
+				"life": 0.6, "max": 0.6, "col": col, "col2": Color(1, 0.9, 0.5), "r": randf_range(3.0, 5.0)})
+		"petal":
+			particles.append({"kind": "bubble", "pos": pos + Vector2(0, -30), "vel": Vector2(randf_range(-30, 30), randf_range(15, 40)),
+				"life": 1.0, "max": 1.0, "col": col, "r": randf_range(3.0, 5.0)})
+		_: # gold, frost, heart: parıltı
+			particles.append({"kind": "sparkle", "pos": pos, "vel": Vector2(0, -25), "life": 0.55, "max": 0.55,
+				"col": col.lightened(0.2), "r": randf_range(4.0, 7.0)})
 
 
 # --- Olaylar: simülasyon → görüntü/ses ------------------------------------------
@@ -1191,11 +1220,17 @@ func _present_box(ev: Dictionary) -> void:
 				"life": life, "max": life, "col": Color(0.7, 0.45, 0.22), "rot": randf() * TAU, "spin": randf_range(-12.0, 12.0)})
 		_fx_ring(pos, col, 80.0, 0.4, 6.0)
 		_fx_sparks(pos, col, 16, 360.0, 3.0)
-	if mine or (_near_camera(pos) and id in ["bomb", "poison"]):
-		if id != "powerup":
-			_fx_text(pos + Vector2(0, -50), Loc.t("box_" + id), col, 30)
-		if mine:
-			sfx.play("powerup" if good else "error", 0.0, 0.0)
+	# Ne çıktığı net anlaşılsın: açan oyuncuya ekranın ortasında büyük yazı + karakterin üstünde etiket
+	var what := Loc.t("box_" + id)
+	if id == "powerup":
+		what = Loc.t("pu_" + String(ev.get("pu", "speed"))).to_upper() + "!"
+	if mine:
+		hud.flash_banner(Loc.t("box_open") % what, col, 2.6)
+		_fx_text(player.position + Vector2(0, -150), what, col, 36)
+		sfx.play("powerup" if good else "error", 0.0, 0.0)
+		add_shake(4.0 if good else 7.0)
+	elif _near_camera(pos):
+		_fx_text(pos + Vector2(0, -50), what, col, 26)
 
 
 func _present_kill(ev: Dictionary) -> void:
@@ -1312,6 +1347,7 @@ func _hit_crate(i: int, at: Vector2, opener: Fighter) -> void:
 func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 	var m := GameData.roll_mystery()
 	var id: String = m["id"]
+	var pu_type := ""
 	match id:
 		"knives":
 			for k in 8:
@@ -1321,6 +1357,7 @@ func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 		"powerup":
 			if opener != null:
 				var type: String = ["speed", "shield", "magnet", "heal"].pick_random()
+				pu_type = type
 				_apply_powerup(opener, type)
 		"rage":
 			if opener != null:
@@ -1339,7 +1376,7 @@ func _open_mystery(pos: Vector2, opener: Fighter) -> void:
 					_lose_knife(opener, opener.position)
 		"poison":
 			hazards.append({"kind": "poison", "pos": pos, "t": 5.0})
-	_emit({"t": "box", "pos": pos, "id": id, "good": m["good"], "o": opener.net_id if opener != null else 0})
+	_emit({"t": "box", "pos": pos, "id": id, "good": m["good"], "o": opener.net_id if opener != null else 0, "pu": pu_type})
 
 
 func _update_hazards(delta: float) -> void:
@@ -3484,14 +3521,16 @@ var ground_tex: Texture2D = null
 ## Her karede yüzlerce çim/çiçek/taş yerine tek bir resim çizilir (web'de çok büyük kazanç).
 func _bake_ground() -> void:
 	var vp := SubViewport.new()
-	vp.size = Vector2i(GROUND_TEX_SIZE, GROUND_TEX_SIZE)
+	# Telefonda bellek için 2048, bilgisayarda daha net zemin için 3072
+	var tex_size := GROUND_TEX_SIZE if low_fx else 3072
+	vp.size = Vector2i(tex_size, tex_size)
 	vp.transparent_bg = true
 	vp.disable_3d = true
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(vp)
 	var painter := Node2D.new()
-	painter.position = Vector2(GROUND_TEX_SIZE, GROUND_TEX_SIZE) / 2.0
-	painter.scale = Vector2.ONE * (GROUND_TEX_SIZE / (GROUND_EXTENT * 2.0))
+	painter.position = Vector2(tex_size, tex_size) / 2.0
+	painter.scale = Vector2.ONE * (tex_size / (GROUND_EXTENT * 2.0))
 	vp.add_child(painter)
 	painter.draw.connect(func() -> void: _paint_ground(painter))
 	ground_tex = vp.get_texture()
@@ -3511,13 +3550,15 @@ func _paint_ground(ci: CanvasItem) -> void:
 	ci.draw_circle(Vector2.ZERO, ARENA_RADIUS + 20.0, Color(0.24, 0.36, 0.25))
 	ci.draw_circle(Vector2.ZERO, ARENA_RADIUS, Color(0.36, 0.6, 0.36))
 	# Açık ve koyu çim lekeleri
-	for i in 140:
+	# Detay sayısı alanla orantılı (harita büyüse de seyrekleşmesin)
+	var density := pow(ARENA_RADIUS / 1800.0, 2.0)
+	for i in int(140 * density):
 		var p := Vector2.from_angle(rng.randf() * TAU) * sqrt(rng.randf()) * (ARENA_RADIUS - 120.0)
 		var light := rng.randf() < 0.5
 		ci.draw_circle(p, rng.randf_range(60.0, 150.0),
 			Color(0.45, 0.7, 0.4, 0.18) if light else Color(0.25, 0.48, 0.27, 0.2))
 	# Çim tutamları, çiçekler ve taşlar
-	for i in 900:
+	for i in int(900 * density):
 		var p := Vector2.from_angle(rng.randf() * TAU) * sqrt(rng.randf()) * (ARENA_RADIUS - 30.0)
 		var roll := rng.randf()
 		if roll < 0.75:
