@@ -1,4 +1,4 @@
-param([string]$ServerUrl = "")
+﻿param([string]$ServerUrl = "")
 # Knife Arena'yı internete yayınlar:
 #  1) Web sürümünü docs/ klasörüne çıkarır (GitHub Pages buradan yayınlar)
 #  2) Sunucu paketini server/ klasörüne çıkarır (Render.com bundan Docker sunucusu kurar)
