@@ -903,7 +903,7 @@ func _draw_server_players(r: Rect2, players: Array) -> void:
 ## Değişiklik oyuncu çevrimiçiyse hemen, değilse bir sonraki girişinde uygulanır ("bekliyor").
 func _draw_registry(r: Rect2, reg: Array) -> void:
 	_panel(r, PANEL_BG, Color(1, 1, 1, 0.08), 14, 1)
-	_text(Vector2(r.position.x + 14, r.position.y + 24), "KAYITLI OYUNCULAR", 15, GOLD)
+	_text(Vector2(r.position.x + 14, r.position.y + 24), "KAYITLI OYUNCULAR (ilk başlama sırasıyla)", 15, GOLD)
 	_text(Vector2(r.position.x, r.position.y + 24), "yeşil nokta: şu an bağlı", 11, Color(1, 1, 1, 0.45),
 		HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14.0)
 	if reg.is_empty():
@@ -927,9 +927,9 @@ func _draw_registry(r: Rect2, reg: Array) -> void:
 		var mid := row.position.y + row.size.y / 2.0
 		GameData.disc(cv, Vector2(row.position.x + 12, mid - 6), 5.0, Color(0.4, 1, 0.5) if p.get("on", false) else Color(1, 1, 1, 0.2))
 		var info_w := row.size.x - acts.size() * (bw + 4) - 30.0
-		var line1 := "%s  •  Sv %d  •  %d altın  •  %d leş" % [String(p.get("n", "?")), int(p.get("l", 1)), int(p.get("c", 0)), int(p.get("kills", 0))]
+		var line1 := "%d. %s  •  Sv %d  •  %d altın  •  %d leş" % [idx + 1, String(p.get("n", "?")), int(p.get("l", 1)), int(p.get("c", 0)), int(p.get("kills", 0))]
 		_text(Vector2(row.position.x + 24, mid - 2), line1, _fit_size(line1, 14, info_w), Color.WHITE)
-		var line2 := "Son: %s  •  %s" % [String(p.get("seen", "-")), String(p.get("dev", ""))]
+		var line2 := "Başladı: %s  •  Son: %s  •  %s" % [String(p.get("first", "-")), String(p.get("seen", "-")), String(p.get("dev", ""))]
 		if p.get("pend", false):
 			line2 += "  •  değişiklik bekliyor"
 		_text(Vector2(row.position.x + 24, mid + 14), line2, _fit_size(line2, 11, info_w), Color(0.6, 0.85, 1, 0.8))

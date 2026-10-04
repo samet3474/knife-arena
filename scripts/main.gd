@@ -2372,14 +2372,18 @@ func _update_record(fname: String, info: Dictionary, level: int) -> void:
 	var key := fname.to_lower()
 	var r: Dictionary = records.get(key, {"n": fname, "l": 1})
 	r["n"] = fname
-	# Oyuncunun bilgisi: son görülme, cihaz, konum (yönetim panelindeki "tüm oyuncular" listesi)
+	# Oyuncunun bilgisi: ilk başlama, son görülme, cihaz, konum (yönetim panelindeki "tüm oyuncular" listesi)
+	if not r.has("first_u"):
+		r["first_u"] = int(r.get("seen_u", Time.get_unix_time_from_system()))
+		r["first"] = String(r.get("seen", _now_str()))
 	r["seen"] = _now_str()
 	r["seen_u"] = int(Time.get_unix_time_from_system())
 	r["dev"] = String(info.get("dev", r.get("dev", "?"))).left(30)
 	if String(info.get("loc", "")) != "":
 		r["loc"] = String(info["loc"]).left(40)
 	# Oyuncu son sıfırlamadan önceki verisiyle geldiyse (henüz sıfırlanmadı) eski değerler yazılmaz
-	if int(info.get("re", 0)) >= lb_epoch:
+	var has_pend := not (r.get("pend", {}) as Dictionary).is_empty()
+	if int(info.get("re", 0)) >= lb_epoch and not has_pend:
 		# sk/sc: tek oyunculu leş/altın, mk/mc: çok oyunculu leş/altın; oyuncunun güncel değeri geçerli
 		for stat in LB_STATS_MAX:
 			r[stat] = clampi(int(info.get(stat, 0)), 0, 1000000)
@@ -2436,12 +2440,14 @@ func _registry() -> Array:
 	for peer in sessions.keys():
 		online[String(sessions[peer]["n"]).to_lower()] = true
 	var all: Array = records.keys()
-	all.sort_custom(func(a: String, b: String) -> bool: return int(records[a].get("seen_u", 0)) > int(records[b].get("seen_u", 0)))
+	all.sort_custom(func(a: String, b: String) -> bool:
+		return int(records[a].get("first_u", records[a].get("seen_u", 0))) < int(records[b].get("first_u", records[b].get("seen_u", 0))))
 	var out := []
-	for key in all.slice(0, 150):
+	for key in all.slice(0, 300):
 		var r: Dictionary = records[key]
 		out.append({"k": String(key).to_utf8_buffer().hex_encode(), "n": r.get("n", key), "l": int(r.get("l", 1)),
 			"c": int(r.get("c", 0)), "kills": int(r.get("sk", 0)) + int(r.get("mk", 0)), "seen": r.get("seen", "-"),
+			"first": r.get("first", r.get("seen", "-")),
 			"dev": r.get("dev", ""), "on": online.has(key), "pend": not (r.get("pend", {}) as Dictionary).is_empty()})
 	return out
 
@@ -2455,6 +2461,9 @@ func _merge_seed(seed: Dictionary) -> void:
 	if e > lb_epoch:
 		records.clear()
 		lb_epoch = e
+	elif not records.is_empty():
+		# Sunucunun listesi duruyor: oyuncunun eski kopyası yöneticinin düzenlemelerini ezmesin
+		return
 	var changed := false
 	for stat in ["sk", "sc", "mk", "mc", "l"]:
 		var rows = seed.get(stat, [])
@@ -3041,7 +3050,8 @@ func fetch_leaderboard(force := false) -> void:
 	if lobby_online:
 		if force or now - lb_fetched_at >= LB_REFRESH:
 			lb_fetched_at = now
-			net.c_top.rpc_id(1, _top_info(), save["top"] if save["top"] is Dictionary else {})
+			# Yenilemelerde kopya gönderilmez (yalnızca ilk bağlanışta; yönetici düzenlemelerini ezmesin)
+			net.c_top.rpc_id(1, _top_info(), {})
 		return
 	if lb_fetching:
 		return
