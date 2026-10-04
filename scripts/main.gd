@@ -111,7 +111,11 @@ var admin_pending := "" # istemci: bağlanınca gönderilecek yönetici şifresi
 var records := {} # sunucu: skor tablosu (isim → {"n", "k", "l", "c"})
 var net_connected_at := -1.0 # istemci: bağlantının açıldığı an (sürüm uyuşmazlığını anlamak için)
 ## Ağ protokolü sürümü; RPC'ler değişince artırılır.
-const NET_VERSION := 3
+const NET_VERSION := 4
+var test_move := false # test: karakter kendiliğinden yürür, konum ve görüntü sayısı yazılır
+var test_snaps := 0
+var test_timer := 0.0
+var lb_fetched_at := -999.0 # istemci: skor tablosunun sunucudan en son çekildiği an
 ## Telefonda (özellikle tarayıcıda) efekt yoğunluğu ve zemin detayı azaltılır.
 var low_fx := false
 ## Kameranın gördüğü dünya alanı; dışındaki nesneler çizilmez.
@@ -223,6 +227,8 @@ func _ready() -> void:
 	if state == "menu" and "--splash" in args:
 		state = "splash"
 	_apply_test_args(args)
+	if state == "menu" and not "--no-lb" in args:
+		fetch_leaderboard(true)
 
 
 func _startup_log(part: String, start_ms: int) -> void:
@@ -240,6 +246,7 @@ func _apply_test_args(args: PackedStringArray) -> void:
 			player.knives = 16
 		if a.begins_with("--host="):
 			save["mp_host"] = a.trim_prefix("--host=")
+	test_move = "--test-move" in args
 	if "--fragile" in args and player != null:
 		player.hp = 1.0
 		player.since_hit = -999.0
@@ -672,6 +679,7 @@ func on_button(id: String) -> void:
 		"menu":
 			_leave_multiplayer()
 			_start_round(false)
+			fetch_leaderboard()
 		_:
 			if id.begins_with("quest_"):
 				claim_quest(id.trim_prefix("quest_").to_int())
@@ -866,6 +874,8 @@ func _process(delta: float) -> void:
 	if perf_log and not _first_frame_logged:
 		_first_frame_logged = true
 		print("STARTUP ilk kare: motor açıldıktan %d ms sonra" % Time.get_ticks_msec())
+	if lb_fetching and Time.get_ticks_msec() / 1000.0 - lb_started > LB_TIMEOUT:
+		_stop_lb_fetch()
 	match net_mode:
 		"server":
 			# Sunucu penceresi yalnızca bilgi gösterir: saniyede iki kez yenilemek yeter
@@ -1360,6 +1370,8 @@ func _read_move() -> Vector2:
 			- float(Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP)))
 	if k != Vector2.ZERO:
 		v = k.normalized()
+	if test_move:
+		v = Vector2.RIGHT.rotated(round_time * 0.5)
 	return v
 
 
@@ -2000,6 +2012,12 @@ func _update_record(fname: String, info: Dictionary, level: int) -> void:
 		f.store_string(JSON.stringify(records))
 
 
+func server_top_request(info: Dictionary) -> void:
+	var fname := String(info.get("name", "")).strip_edges().left(14)
+	if fname != "":
+		_update_record(fname, info, clampi(int(info.get("level", 1)), 1, GameData.MAX_LEVEL))
+
+
 func top_lists() -> Dictionary:
 	var out := {}
 	var all: Array = records.values()
@@ -2174,6 +2192,7 @@ func _mp_host() -> String:
 
 
 func _mp_connect() -> void:
+	_stop_lb_fetch()
 	_clear_world()
 	net_mode = "client"
 	state = "connecting"
@@ -2188,7 +2207,46 @@ func _join_info() -> Dictionary:
 		"acc": selected_acc(), "kills": int(save["total_kills"]), "coins": int(save["coins"])}
 
 
+## Ana menü skor tablosunu çevrimiçi sunucudan çeker (oyuna girmeden kısa bir bağlantıyla).
+## Uyuyan ücretsiz sunucuyu da uyandırır; çok oyunculuya geçiş hızlanır.
+const LB_REFRESH := 60.0
+const LB_TIMEOUT := 75.0
+var lb_fetching := false
+var lb_started := 0.0
+
+
+func fetch_leaderboard(force := false) -> void:
+	if net_mode != "" or lb_fetching or _mp_host() == "":
+		return
+	var now := Time.get_ticks_msec() / 1000.0
+	if not force and now - lb_fetched_at < LB_REFRESH:
+		return
+	lb_fetching = true
+	lb_started = now
+	if net.connect_to(_mp_host()) != OK:
+		_stop_lb_fetch()
+
+
+func _stop_lb_fetch() -> void:
+	if lb_fetching:
+		lb_fetching = false
+		if net_mode == "":
+			net.close()
+
+
+func client_top(data: Dictionary) -> void:
+	save["top"] = data
+	lb_fetched_at = Time.get_ticks_msec() / 1000.0
+	_write_save()
+	_stop_lb_fetch.call_deferred()
+
+
 func _on_net_connected() -> void:
+	if lb_fetching and net_mode == "":
+		# İsimsiz oyuncular tabloya yazılmaz (yalnızca liste istenir)
+		var info := _join_info() if String(save["player_name"]).strip_edges() != "" else {}
+		net.c_top.rpc_id(1, info)
+		return
 	if net_mode != "client":
 		return
 	net_connected_at = round_time
@@ -2199,6 +2257,9 @@ func _on_net_connected() -> void:
 
 
 func _on_net_failed() -> void:
+	if lb_fetching and net_mode == "":
+		_stop_lb_fetch()
+		return
 	if net_mode != "client":
 		return
 	_leave_multiplayer()
@@ -2262,6 +2323,7 @@ func client_snapshot(d: Dictionary) -> void:
 	if net_mode != "client" or state == "admin" or state == "admin_wait":
 		return
 	var _pt := Time.get_ticks_usec()
+	test_snaps += 1
 	_client_snapshot_body(d)
 	perf_mark("snapshot", _pt)
 
@@ -2362,6 +2424,12 @@ func _client_process(delta: float) -> void:
 
 
 func _client_process_body(delta: float) -> void:
+	if test_move and player != null:
+		test_timer += delta
+		if test_timer >= 1.0:
+			print("TEST konum=%s görüntü/sn=%d fps=%d" % [player.net_pos.round(), test_snaps, Engine.get_frames_per_second()])
+			test_timer = 0.0
+			test_snaps = 0
 	delta = minf(delta, 0.05)
 	round_time += delta
 	state_time += delta
@@ -2990,6 +3058,7 @@ func admin_data() -> Dictionary:
 ## Menüden yönetici girişi: sunucuya bağlanır, oyuncu olarak değil yönetici olarak giriş yapar.
 func admin_connect(password: String) -> void:
 	admin_pending = password
+	_stop_lb_fetch()
 	_clear_world()
 	net_mode = "client"
 	state = "admin_wait"

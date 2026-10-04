@@ -140,6 +140,20 @@ func s_grant(coins: int, levels: int) -> void:
 	main.client_grant(coins, levels)
 
 
+## Ana menü skor tablosu: oyuna girmeden yalnızca listeyi ister.
+## info: oyuncunun güncel istatistikleri (isim, leş, seviye, altın); tabloya işlenir.
+@rpc("any_peer", "reliable")
+func c_top(info: Dictionary) -> void:
+	if multiplayer.is_server():
+		main.server_top_request(info)
+		s_top.rpc_id(multiplayer.get_remote_sender_id(), main.top_lists())
+
+
+@rpc("authority", "reliable")
+func s_top(data: Dictionary) -> void:
+	main.client_top(data)
+
+
 func peer_ip(id: int) -> String:
 	if peer == null or not multiplayer.get_peers().has(id):
 		return "?"

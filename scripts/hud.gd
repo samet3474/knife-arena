@@ -155,6 +155,9 @@ func _on_name_focus_exited() -> void:
 
 func _process(delta: float) -> void:
 	banner_time = maxf(0.0, banner_time - delta)
+	if main.state != "playing":
+		joy_index = -1
+		throw_index = -1
 	var in_menu: bool = main.state == "menu"
 	if not in_menu:
 		popup = ""
@@ -177,6 +180,13 @@ func _process(delta: float) -> void:
 		admin_edit.size = Vector2(440, 48)
 	elif admin_edit.has_focus():
 		admin_edit.release_focus()
+
+
+## Uygulama arka plana geçince (bildirim, ana ekran) basılı dokunuşlar bırakılmış sayılır.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		joy_index = -1
+		throw_index = -1
 
 
 func flash_banner(text: String, col := Color(1, 0.4, 0.35), duration := 2.2) -> void:
@@ -239,8 +249,10 @@ func _input(event: InputEvent) -> void:
 				main.player_throw()
 			elif touch.position.distance_to(_dash_center()) < DASH_RADIUS + 26.0:
 				main.player_dash()
-			elif joy_index == -1 and touch.position.x < _screen().x * 0.6:
-				# Ekranın sol tarafında nereye dokunulursa joystick orada açılır
+			elif touch.position.x < _screen().x * 0.6:
+				# Ekranın sol tarafında nereye dokunulursa joystick orada açılır.
+				# Önceki parmağın kalkışı kaybolmuş olsa bile (sistem hareketi, açılan pencere)
+				# yeni dokunuş joystick'i devralır; aksi halde joystick kalıcı olarak kilitlenir.
 				joy_index = touch.index
 				joy_origin = touch.position
 				joy_pos = touch.position
